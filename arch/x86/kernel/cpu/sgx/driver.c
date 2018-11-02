@@ -10,6 +10,15 @@
 #include "driver.h"
 #include "encl.h"
 
+u64 sgx_encl_size_max_32;
+u64 sgx_encl_size_max_64;
+
+/*
+ * XSAVE size table for extended features, which are set in the global XSAVE
+ * Feature Request Mask (XFRM) (a subset of XCR0).
+ */
+u32 sgx_xsave_size_tbl[XFEATURE_MAX];
+
 static int sgx_open(struct inode *inode, struct file *file)
 {
 	struct sgx_encl *encl;
@@ -71,10 +80,22 @@ static unsigned long sgx_get_unmapped_area(struct file *file,
 	return current->mm->get_unmapped_area(file, addr, len, pgoff, flags);
 }
 
+#ifdef CONFIG_COMPAT
+static long sgx_compat_ioctl(struct file *filep, unsigned int cmd,
+			      unsigned long arg)
+{
+	return sgx_ioctl(filep, cmd, arg);
+}
+#endif
+
 static const struct file_operations sgx_encl_fops = {
 	.owner			= THIS_MODULE,
 	.open			= sgx_open,
 	.release		= sgx_release,
+	.unlocked_ioctl		= sgx_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl		= sgx_compat_ioctl,
+#endif
 	.mmap			= sgx_mmap,
 	.get_unmapped_area	= sgx_get_unmapped_area,
 };
@@ -88,5 +109,31 @@ static struct miscdevice sgx_dev_enclave = {
 
 int __init sgx_drv_init(void)
 {
+	unsigned int eax, ebx, ecx, edx;
+	u64 xfrm_mask;
+	int i;
+
+	cpuid_count(SGX_CPUID, 0, &eax, &ebx, &ecx, &edx);
+	sgx_encl_size_max_64 = 1ULL << ((edx >> 8) & 0xFF);
+	sgx_encl_size_max_32 = 1ULL << (edx & 0xFF);
+
+	/* Intel SGX Attributes Enumeration (EAX = 12H, ECX = 1) */
+	cpuid_count(SGX_CPUID, 1, &eax, &ebx, &ecx, &edx);
+
+	if (boot_cpu_has(X86_FEATURE_OSXSAVE)) {
+		xfrm_mask = (((u64)edx) << 32) + (u64)ecx;
+
+		for (i = XFEATURE_YMM; i < XFEATURE_MAX; i++) {
+			/*
+			 * Processor Extended State Enumeration
+			 * (EAX = 0DH, ECX = n > 2)
+			 */
+			cpuid_count(0x0D, i, &eax, &ebx, &ecx, &edx);
+
+			if ((1UL << i) & xfrm_mask)
+				sgx_xsave_size_tbl[i] = eax + ebx;
+		}
+	}
+
 	return misc_register(&sgx_dev_enclave);
 }

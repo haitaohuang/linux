@@ -9,7 +9,14 @@
 #include <linux/rwsem.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
+#include <uapi/asm/sgx.h>
 #include "sgx.h"
+
+extern u64 sgx_encl_size_max_32;
+extern u64 sgx_encl_size_max_64;
+extern u32 sgx_xsave_size_tbl[XFEATURE_MAX];
+
+long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
 int sgx_drv_init(void);
 
