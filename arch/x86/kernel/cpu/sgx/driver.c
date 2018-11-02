@@ -18,6 +18,9 @@ u64 sgx_encl_size_max_64;
  * Feature Request Mask (XFRM) (a subset of XCR0).
  */
 u32 sgx_xsave_size_tbl[XFEATURE_MAX];
+u64 sgx_attributes_reserved_mask;
+u64 sgx_xfrm_reserved_mask = ~0x3;
+u32 sgx_misc_reserved_mask;
 
 static int sgx_open(struct inode *inode, struct file *file)
 {
@@ -114,15 +117,20 @@ static struct miscdevice sgx_dev_enclave = {
 int __init sgx_drv_init(void)
 {
 	unsigned int eax, ebx, ecx, edx;
+	u64 attr_mask;
 	u64 xfrm_mask;
 	int i;
 
 	cpuid_count(SGX_CPUID, 0, &eax, &ebx, &ecx, &edx);
+	sgx_misc_reserved_mask = ~ebx | SGX_MISC_RESERVED_MASK;
 	sgx_encl_size_max_64 = 1ULL << ((edx >> 8) & 0xFF);
 	sgx_encl_size_max_32 = 1ULL << (edx & 0xFF);
 
 	/* Intel SGX Attributes Enumeration (EAX = 12H, ECX = 1) */
 	cpuid_count(SGX_CPUID, 1, &eax, &ebx, &ecx, &edx);
+
+	attr_mask = (((u64)ebx) << 32) + (u64)eax;
+	sgx_attributes_reserved_mask = ~attr_mask | SGX_ATTR_RESERVED_MASK;
 
 	if (boot_cpu_has(X86_FEATURE_OSXSAVE)) {
 		xfrm_mask = (((u64)edx) << 32) + (u64)ecx;
@@ -137,6 +145,8 @@ int __init sgx_drv_init(void)
 			if ((1UL << i) & xfrm_mask)
 				sgx_xsave_size_tbl[i] = eax + ebx;
 		}
+
+		sgx_xfrm_reserved_mask = ~xfrm_mask;
 	}
 
 	return misc_register(&sgx_dev_enclave);

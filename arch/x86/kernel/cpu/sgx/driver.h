@@ -12,9 +12,16 @@
 #include <uapi/asm/sgx.h>
 #include "sgx.h"
 
+#define SGX_EINIT_SPIN_COUNT	20
+#define SGX_EINIT_SLEEP_COUNT	50
+#define SGX_EINIT_SLEEP_TIME	20
+
 extern u64 sgx_encl_size_max_32;
 extern u64 sgx_encl_size_max_64;
 extern u32 sgx_xsave_size_tbl[XFEATURE_MAX];
+extern u64 sgx_attributes_reserved_mask;
+extern u64 sgx_xfrm_reserved_mask;
+extern u32 sgx_misc_reserved_mask;
 
 long sgx_ioctl(struct file *filep, unsigned int cmd, unsigned long arg);
 
