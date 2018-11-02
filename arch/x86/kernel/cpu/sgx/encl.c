@@ -201,6 +201,8 @@ void sgx_encl_destroy(struct sgx_encl *encl)
 	struct sgx_encl_page *entry;
 	unsigned long index;
 
+	atomic_or(SGX_ENCL_DEAD, &encl->flags);
+
 	xa_for_each(&encl->page_array, index, entry) {
 		if (entry->epc_page) {
 			sgx_free_epc_page(entry->epc_page);

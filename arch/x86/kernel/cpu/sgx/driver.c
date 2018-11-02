@@ -39,6 +39,10 @@ static int sgx_release(struct inode *inode, struct file *file)
 {
 	struct sgx_encl *encl = file->private_data;
 
+	mutex_lock(&encl->lock);
+	atomic_or(SGX_ENCL_DEAD, &encl->flags);
+	mutex_unlock(&encl->lock);
+
 	sgx_encl_destroy(encl);
 
 	/* Detect EPC page leak's. */
