@@ -33,7 +33,10 @@ struct sgx_epc_page {
 	unsigned int section;
 	u16 flags;
 	u16 poison;
-	struct sgx_encl_page *encl_owner;
+	union {
+		struct sgx_encl_page *encl_owner;
+		struct sgx_encl *encl;
+	};
 	struct list_head list;
 };
 
