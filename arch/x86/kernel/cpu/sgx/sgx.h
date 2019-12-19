@@ -39,6 +39,7 @@ struct sgx_epc_page {
 		struct sgx_encl_page *encl_owner;
 		/* Use when SGX_EPC_PAGE_KVM_GUEST set in ->flags: */
 		void __user *vepc_vaddr;
+		struct sgx_encl *encl;
 	};
 	struct list_head list;
 };
