@@ -19,6 +19,11 @@
 
 #define SGX_MAX_EPC_SECTIONS		8
 #define SGX_EEXTEND_BLOCK_SIZE		256
+
+/*
+ * Maximum number of pages to scan for reclaiming.
+ */
+#define SGX_NR_TO_SCAN_MAX		32U
 #define SGX_NR_TO_SCAN			16
 #define SGX_NR_LOW_PAGES		32
 #define SGX_NR_HIGH_PAGES		64
@@ -156,6 +161,9 @@ void sgx_reclaim_direct(void);
 void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags);
 int sgx_drop_epc_page(struct sgx_epc_page *page);
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim);
+unsigned int sgx_do_epc_reclamation(struct list_head *iso);
+unsigned int sgx_isolate_epc_pages(struct sgx_epc_lru_list *lru, unsigned int nr_to_scan,
+				   struct list_head *dst);
 
 void sgx_ipi_cb(void *info);
 
