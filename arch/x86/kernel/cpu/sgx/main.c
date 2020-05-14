@@ -299,15 +299,15 @@ out:
  * problematic as it would increase the lock contention too much, which would
  * halt forward progress.
  */
-static void sgx_reclaim_pages(int nr_to_scan)
+static size_t sgx_reclaim_pages(size_t nr_to_scan)
 {
 	struct sgx_backing backing[SGX_NR_TO_SCAN_MAX];
 	struct sgx_epc_page *epc_page, *tmp;
 	struct sgx_encl_page *encl_page;
 	pgoff_t page_index;
 	LIST_HEAD(iso);
-	int ret;
-	int i;
+	size_t ret;
+	size_t i;
 
 	spin_lock(&sgx_global_lru.lock);
 	for (i = 0; i < SGX_NR_TO_SCAN; i++) {
@@ -333,7 +333,7 @@ static void sgx_reclaim_pages(int nr_to_scan)
 	spin_unlock(&sgx_global_lru.lock);
 
 	if (list_empty(&iso))
-		return;
+		return 0;
 
 	i = 0;
 	list_for_each_entry_safe(epc_page, tmp, &iso, list) {
@@ -378,6 +378,7 @@ skip:
 
 		sgx_free_epc_page(epc_page);
 	}
+	return i;
 }
 
 static bool sgx_should_reclaim(unsigned long watermark)
