@@ -33,6 +33,8 @@
 #define SGX_EPC_PAGE_IS_FREE		BIT(1)
 /* Pages allocated for KVM guest */
 #define SGX_EPC_PAGE_KVM_GUEST		BIT(2)
+/* page flag to indicate reclaim is in progress */
+#define SGX_EPC_PAGE_RECLAIM_IN_PROGRESS BIT(3)
 
 struct sgx_epc_page {
 	unsigned int section;
