@@ -41,12 +41,12 @@ struct sgx_epc_section {
 #define SGX_NR_LOW_PAGES		32
 #define SGX_NR_HIGH_PAGES		64
 
-extern struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
+extern struct sgx_epc_section *sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 
 static inline struct sgx_epc_section *sgx_get_epc_section(
 		struct sgx_epc_page *page)
 {
-	return &sgx_epc_sections[page->desc & SGX_EPC_SECTION_MASK];
+	return sgx_epc_sections[page->desc & SGX_EPC_SECTION_MASK];
 }
 
 static inline void *sgx_get_epc_addr(struct sgx_epc_page *page)

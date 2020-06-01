@@ -13,7 +13,7 @@
 #include "encl.h"
 #include "encls.h"
 
-struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
+struct sgx_epc_section *sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 static int sgx_nr_epc_sections;
 static struct task_struct *ksgxswapd_tsk;
 static DECLARE_WAIT_QUEUE_HEAD(ksgxswapd_waitq);
@@ -422,7 +422,7 @@ static unsigned long sgx_nr_free_pages(void)
 	int i;
 
 	for (i = 0; i < sgx_nr_epc_sections; i++)
-		cnt += sgx_epc_sections[i].free_cnt;
+		cnt += sgx_epc_sections[i]->free_cnt;
 
 	return cnt;
 }
@@ -444,17 +444,17 @@ static int ksgxswapd(void *p)
 	 * on kmemexec.
 	 */
 	for (i = 0; i < sgx_nr_epc_sections; i++)
-		sgx_sanitize_section(&sgx_epc_sections[i]);
+		sgx_sanitize_section(sgx_epc_sections[i]);
 
 	/*
 	 * 2nd round for the SECS pages as they cannot be removed when they
 	 * still hold child pages.
 	 */
 	for (i = 0; i < sgx_nr_epc_sections; i++) {
-		sgx_sanitize_section(&sgx_epc_sections[i]);
+		sgx_sanitize_section(sgx_epc_sections[i]);
 
 		/* Should never happen. */
-		if (!list_empty(&sgx_epc_sections[i].unsanitized_page_list))
+		if (!list_empty(&sgx_epc_sections[i]->unsanitized_page_list))
 			WARN(1, "EPC section %d has unsanitized pages.\n", i);
 	}
 
@@ -488,6 +488,15 @@ static bool __init sgx_page_reclaimer_init(void)
 	return true;
 }
 
+
+struct sgx_numa_node {
+	struct sgx_epc_section sections[SGX_MAX_EPC_SECTIONS];
+	int nr_sections;
+};
+
+static struct sgx_numa_node sgx_numa_nodes[MAX_NUMNODES];
+static int sgx_nr_epc_nodes;
+
 static struct sgx_epc_page *__sgx_alloc_epc_page_from_section(struct sgx_epc_section *section)
 {
 	struct sgx_epc_page *page;
@@ -502,6 +511,42 @@ static struct sgx_epc_page *__sgx_alloc_epc_page_from_section(struct sgx_epc_sec
 	return page;
 }
 
+static struct sgx_epc_page *__sgx_alloc_epc_page_from_node(int nid)
+{
+	struct sgx_numa_node *node = &sgx_numa_nodes[nid];
+	struct sgx_epc_section *section;
+	struct sgx_epc_page *page;
+	int i;
+
+	for (i = 0; i < node->nr_sections; i++) {
+		section = &node->sections[i];
+		spin_lock(&section->lock);
+		page = __sgx_alloc_epc_page_from_section(section);
+		spin_unlock(&section->lock);
+
+		if (page)
+			return page;
+	}
+
+	return NULL;
+}
+
+static int __init sgx_pfn_to_nid(unsigned long pfn)
+{
+	pg_data_t *pgdat;
+	int nid;
+
+	for (nid = 0; nid < nr_node_ids; nid++) {
+		pgdat = NODE_DATA(nid);
+
+		if (pfn >= pgdat->node_start_pfn &&
+		    pfn < (pgdat->node_start_pfn + pgdat->node_spanned_pages))
+			return nid;
+	}
+
+	return 0;
+}
+
 /**
  * __sgx_alloc_epc_page() - Allocate an EPC page
  *
@@ -514,16 +559,19 @@ static struct sgx_epc_page *__sgx_alloc_epc_page_from_section(struct sgx_epc_sec
  */
 struct sgx_epc_page *__sgx_alloc_epc_page(void)
 {
-	struct sgx_epc_section *section;
 	struct sgx_epc_page *page;
+	int nid = numa_node_id();
 	int i;
 
-	for (i = 0; i < sgx_nr_epc_sections; i++) {
-		section = &sgx_epc_sections[i];
-		spin_lock(&section->lock);
-		page = __sgx_alloc_epc_page_from_section(section);
-		spin_unlock(&section->lock);
+	page = __sgx_alloc_epc_page_from_node(nid);
+	if (page)
+		return page;
 
+	for (i = 0; i < sgx_nr_epc_nodes; i++) {
+		if (i == nid)
+			continue;
+ 
+		page = __sgx_alloc_epc_page_from_node(i);
 		if (page)
 			return page;
 	}
@@ -670,7 +718,7 @@ static void __init sgx_page_cache_teardown(void)
 	int i;
 
 	for (i = 0; i < sgx_nr_epc_sections; i++)
-		sgx_free_epc_section(&sgx_epc_sections[i]);
+		sgx_free_epc_section(sgx_epc_sections[i]);
 }
 
 /**
@@ -688,7 +736,8 @@ static bool __init sgx_page_cache_init(void)
 {
 	u32 eax, ebx, ecx, edx, type;
 	u64 pa, size;
-	int i;
+	int i, j, nid;
+	struct sgx_numa_node *node;
 
 	for (i = 0; i < ARRAY_SIZE(sgx_epc_sections); i++) {
 		cpuid_count(SGX_CPUID, i + SGX_CPUID_FIRST_VARIABLE_SUB_LEAF,
@@ -708,11 +757,18 @@ static bool __init sgx_page_cache_init(void)
 
 		pr_info("EPC section 0x%llx-0x%llx\n", pa, pa + size - 1);
 
-		if (!sgx_setup_epc_section(pa, size, i, &sgx_epc_sections[i])) {
+		nid = sgx_pfn_to_nid(PFN_DOWN(pa));
+		node = &sgx_numa_nodes[nid];
+		j = node->nr_sections++;
+
+		if (!sgx_setup_epc_section(pa, size, i, &node->sections[j])) {
 			pr_err("No free memory for an EPC section\n");
+			node->nr_sections--;
 			break;
 		}
 
+		sgx_nr_epc_nodes = max(sgx_nr_epc_nodes, nid + 1);
+		sgx_epc_sections[i] = &node->sections[j];
 		sgx_nr_epc_sections++;
 	}
 
