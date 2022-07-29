@@ -171,7 +171,7 @@ FIXTURE(enclave) {
 	struct encl encl;
 	struct sgx_enclave_run run;
 };
-
+static const unsigned long edmm_space =  8589934592; //8G 
 static bool setup_test_encl(unsigned long heap_size, struct encl *encl,
 			    struct __test_metadata *_metadata)
 {
@@ -183,7 +183,7 @@ static bool setup_test_encl(unsigned long heap_size, struct encl *encl,
 	unsigned int i;
 	void *addr;
 
-	if (!encl_load("test_encl.elf", encl, heap_size)) {
+	if (!encl_load("test_encl.elf", encl, heap_size, edmm_space)) {
 		encl_delete(encl);
 		TH_LOG("Failed to load the test enclave.");
 		return false;
@@ -1104,14 +1104,19 @@ TEST_F(enclave, augment)
  * Test for the addition of pages to an initialized enclave via a
  * pre-emptive run of EACCEPT on page to be added.
  */
-TEST_F(enclave, augment_via_eaccept)
+/*
+ * Test for the addition of pages to an initialized enclave via a
+ * pre-emptive run of EACCEPT on page to be added.
+ */
+/*TEST_F(enclave, augment_via_eaccept)*/
+TEST_F_TIMEOUT(enclave, augment_via_eaccept, 90000)
 {
 	struct encl_op_get_from_addr get_addr_op;
 	struct encl_op_put_to_addr put_addr_op;
 	struct encl_op_eaccept eaccept_op;
 	size_t total_size = 0;
 	void *addr;
-	int i;
+	unsigned long int i;
 
 	if (!sgx2_supported())
 		SKIP(return, "SGX2 not supported");
@@ -1125,6 +1130,7 @@ TEST_F(enclave, augment_via_eaccept)
 		struct encl_segment *seg = &self->encl.segment_tbl[i];
 
 		total_size += seg->size;
+		TH_LOG("test enclave: total_size = %ld, seg->size = %ld", total_size, seg->size);
 	}
 
 	/*
@@ -1132,7 +1138,7 @@ TEST_F(enclave, augment_via_eaccept)
 	 * test enclave since enclave size must be a power of 2 in bytes while
 	 * test_encl does not consume it all.
 	 */
-	EXPECT_LT(total_size + PAGE_SIZE, self->encl.encl_size);
+	EXPECT_LT(total_size + edmm_space, self->encl.encl_size);
 
 	/*
 	 * mmap() a page at end of existing enclave to be used for dynamic
@@ -1142,10 +1148,10 @@ TEST_F(enclave, augment_via_eaccept)
 	 * falls into the enclave's address range but not backed
 	 * by existing enclave pages.
 	 */
-
-	addr = mmap((void *)self->encl.encl_base + total_size, PAGE_SIZE,
-		    PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED,
-		    self->encl.fd, 0);
+	TH_LOG("mmaping pages at end of enclave...");
+	addr = mmap((void *)self->encl.encl_base + total_size, edmm_space /*8GB*/,
+			PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED | MAP_FIXED,
+			self->encl.fd, 0);
 	EXPECT_NE(addr, MAP_FAILED);
 
 	self->run.exception_vector = 0;
@@ -1156,25 +1162,29 @@ TEST_F(enclave, augment_via_eaccept)
 	 * Run EACCEPT on new page to trigger the #PF->EAUG->EACCEPT(again
 	 * without a #PF). All should be transparent to userspace.
 	 */
-	eaccept_op.epc_addr = self->encl.encl_base + total_size;
+	TH_LOG("Entering enclave to run EACCEPT for each page of %zd bytes may take a while ...",
+			edmm_space /*8GB*/);
 	eaccept_op.flags = SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG | SGX_SECINFO_PENDING;
 	eaccept_op.ret = 0;
 	eaccept_op.header.type = ENCL_OP_EACCEPT;
 
-	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
+	for (i = 0; i < edmm_space /*8GB*/; i += 4096) {
+		eaccept_op.epc_addr = (uint64_t)(addr + i);
 
-	if (self->run.exception_vector == 14 &&
-	    self->run.exception_error_code == 4 &&
-	    self->run.exception_addr == self->encl.encl_base + total_size) {
-		munmap(addr, PAGE_SIZE);
-		SKIP(return, "Kernel does not support adding pages to initialized enclave");
+		EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
+		if (self->run.exception_vector == 14 &&
+			self->run.exception_error_code == 4 &&
+			self->run.exception_addr == self->encl.encl_base) {
+			munmap(addr, edmm_space /*8GB*/);
+			SKIP(return, "Kernel does not support adding pages to initialized enclave");
+		}
+
+		EXPECT_EQ(self->run.exception_vector, 0);
+		EXPECT_EQ(self->run.exception_error_code, 0);
+		EXPECT_EQ(self->run.exception_addr, 0);
+		ASSERT_EQ(eaccept_op.ret, 0);
+		ASSERT_EQ(self->run.function, EEXIT);
 	}
-
-	EXPECT_EEXIT(&self->run);
-	EXPECT_EQ(self->run.exception_vector, 0);
-	EXPECT_EQ(self->run.exception_error_code, 0);
-	EXPECT_EQ(self->run.exception_addr, 0);
-	EXPECT_EQ(eaccept_op.ret, 0);
 
 	/*
 	 * New page should be accessible from within enclave - attempt to
@@ -1207,7 +1217,7 @@ TEST_F(enclave, augment_via_eaccept)
 	EXPECT_EQ(self->run.exception_error_code, 0);
 	EXPECT_EQ(self->run.exception_addr, 0);
 
-	munmap(addr, PAGE_SIZE);
+	munmap(addr, edmm_space /*8GB*/);
 }
 
 /*

@@ -171,7 +171,7 @@ uint64_t encl_get_entry(struct encl *encl, const char *symbol)
 	return 0;
 }
 
-bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
+bool encl_load(const char *path, struct encl *encl, unsigned long heap_size, unsigned long edmm_space)
 {
 	const char device_path[] = "/dev/sgx_enclave";
 	struct encl_segment *seg;
@@ -300,7 +300,7 @@ bool encl_load(const char *path, struct encl *encl, unsigned long heap_size)
 
 	encl->src_size = encl->segment_tbl[j].offset + encl->segment_tbl[j].size;
 
-	for (encl->encl_size = 4096; encl->encl_size < encl->src_size; )
+	for (encl->encl_size = 4096; encl->encl_size < encl->src_size + edmm_space; )
 		encl->encl_size <<= 1;
 
 	return true;

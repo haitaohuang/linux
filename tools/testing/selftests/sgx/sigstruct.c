@@ -343,7 +343,7 @@ bool encl_measure(struct encl *encl)
 	if (!ctx)
 		goto err;
 
-	if (!mrenclave_ecreate(ctx, encl->src_size))
+	if (!mrenclave_ecreate(ctx, encl->encl_size))
 		goto err;
 
 	for (i = 0; i < encl->nr_segments; i++) {

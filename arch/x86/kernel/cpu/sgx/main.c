@@ -163,9 +163,9 @@ static int __sgx_encl_ewb(struct sgx_epc_page *epc_page, void *va_slot,
 	pginfo.metadata = (unsigned long)kmap_atomic(backing->pcmd) +
 			  backing->pcmd_offset;
 
-	ret = __ewb(&pginfo, sgx_get_epc_virt_addr(epc_page), va_slot);
 	set_page_dirty(backing->pcmd);
 	set_page_dirty(backing->contents);
+	ret = __ewb(&pginfo, sgx_get_epc_virt_addr(epc_page), va_slot);
 
 	kunmap_atomic((void *)(unsigned long)(pginfo.metadata -
 					      backing->pcmd_offset));
