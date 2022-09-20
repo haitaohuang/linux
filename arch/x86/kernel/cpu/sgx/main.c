@@ -552,6 +552,10 @@ int sgx_unmark_page_reclaimable(struct sgx_epc_page *page)
  * Finally, wake up ksgxd when the number of pages goes below the watermark
  * before returning back to the caller.
  *
+ * When an EPC page is assigned to KVM guest, repurpose the 'encl_owner' field
+ * as the virtual address of virtual EPC page, since it is useless in such
+ * scenario, so 'owner' is assigned to 'vepc_vaddr'.
+ *
  * Return:
  *   an EPC page,
  *   -errno on error

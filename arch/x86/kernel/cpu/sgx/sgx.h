@@ -28,12 +28,18 @@
 
 /* Pages on free list */
 #define SGX_EPC_PAGE_IS_FREE		BIT(1)
+/* Pages allocated for KVM guest */
+#define SGX_EPC_PAGE_KVM_GUEST		BIT(2)
 
 struct sgx_epc_page {
 	unsigned int section;
 	u16 flags;
 	u16 poison;
-	struct sgx_encl_page *encl_owner;
+	union {
+		struct sgx_encl_page *encl_owner;
+		/* Use when SGX_EPC_PAGE_KVM_GUEST set in ->flags: */
+		void __user *vepc_vaddr;
+	};
 	struct list_head list;
 };
 
