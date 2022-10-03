@@ -86,6 +86,45 @@ static inline void *sgx_get_epc_virt_addr(struct sgx_epc_page *page)
 	return section->virt_addr + index * PAGE_SIZE;
 }
 
+/*
+ * This data structure wraps a list of reclaimable EPC pages, and a list of
+ * non-reclaimable EPC pages and is used to implement a LRU policy during
+ * reclamation.
+ */
+struct sgx_epc_lru_lists {
+	spinlock_t lock;
+	struct list_head reclaimable;
+};
+
+static inline void sgx_lru_init(struct sgx_epc_lru_lists *lrus)
+{
+	spin_lock_init(&lrus->lock);
+	INIT_LIST_HEAD(&lrus->reclaimable);
+}
+
+/*
+ * Must be called with queue lock acquired
+ */
+static inline void sgx_lru_push(struct list_head *list, struct sgx_epc_page *page)
+{
+	list_add_tail(&page->list, list);
+}
+
+/*
+ * Must be called with queue lock acquired
+ */
+static inline struct sgx_epc_page * sgx_lru_pop(struct list_head *list)
+{
+	struct sgx_epc_page *epc_page;
+
+	if (list_empty(list))
+		return NULL;
+
+	epc_page = list_first_entry(list, struct sgx_epc_page, list);
+	list_del_init(&epc_page->list);
+	return epc_page;
+}
+
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
 void sgx_free_epc_page(struct sgx_epc_page *page);
 
