@@ -304,40 +304,32 @@ struct sgx_encl_page *sgx_encl_load_page(struct sgx_encl *encl,
  * sgx_encl_eaug_page() - Dynamically add page to initialized enclave
  * @vma:	VMA into which this page is added
  * @encl_page:	info of the page to be added
- *
- * When an initialized enclave accesses a page with no backing EPC page
- * on a SGX2 system then the EPC can be added dynamically via the SGX2
- * ENCLS[EAUG] instruction.
- *
- * Returns: Appropriate vm_fault_t: VM_FAULT_NOPAGE when PTE was installed
- * successfully, VM_FAULT_SIGBUS or VM_FAULT_OOM as error otherwise.
+ * Returns: 0 on EAUG success, -EBUSY for waiting on reclaimer to free EPC,
+ * -ENOMEM for out of RAM, -EFAULT for all other failures.*
  */
-static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
-				     struct sgx_encl_page *encl_page)
+int sgx_encl_eaug_page(struct vm_area_struct *vma,
+		       struct sgx_encl_page *encl_page)
 {
-	unsigned long addr = encl_page->desc & PAGE_MASK;
 	struct sgx_encl *encl = encl_page->encl;
-	vm_fault_t vmret = VM_FAULT_SIGBUS;
 	struct sgx_pageinfo pginfo = {0};
 	struct sgx_epc_page *epc_page;
 	struct sgx_va_page *va_page;
 	struct sgx_secinfo secinfo;
-	unsigned long phys_addr;
-	int ret;
+	int ret = -EFAULT;
 
 	mutex_lock(&encl->lock);
 
 	epc_page = sgx_alloc_epc_page(encl_page, false);
 	if (IS_ERR(epc_page)) {
 		if (PTR_ERR(epc_page) == -EBUSY)
-			vmret =  VM_FAULT_NOPAGE;
+			ret = -EBUSY;
 		goto err_out_unlock;
 	}
 
 	va_page = sgx_encl_grow(encl, false);
 	if (IS_ERR(va_page)) {
 		if (PTR_ERR(va_page) == -EBUSY)
-			vmret = VM_FAULT_NOPAGE;
+			ret = -EBUSY;
 		goto err_out_epc;
 	}
 
@@ -356,8 +348,10 @@ static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	}
 
 	ret = __eaug(&pginfo, sgx_get_epc_virt_addr(epc_page));
-	if (ret)
+	if (ret) {
+		ret = -EFAULT;
 		goto err_out_shrink;
+	}
 
 	encl_page->epc_page = epc_page;
 	encl_page->desc &= ~SGX_ENCL_PAGE_TO_EAUG;
@@ -365,18 +359,8 @@ static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 
 	sgx_mark_page_reclaimable(encl_page->epc_page);
 
-	phys_addr = sgx_get_epc_phys_addr(epc_page);
-	/*
-	 * Do not undo everything when creating PTE entry fails - next #PF
-	 * would find page ready for a PTE.
-	 */
-	vmret = vmf_insert_pfn(vma, addr, PFN_DOWN(phys_addr));
-	if (vmret != VM_FAULT_NOPAGE) {
-		mutex_unlock(&encl->lock);
-		return VM_FAULT_SIGBUS;
-	}
 	mutex_unlock(&encl->lock);
-	return VM_FAULT_NOPAGE;
+	return 0;
 
 err_out_shrink:
 	sgx_encl_shrink(encl, va_page);
@@ -385,7 +369,7 @@ err_out_epc:
 err_out_unlock:
 	mutex_unlock(&encl->lock);
 
-	return vmret;
+	return ret;
 }
 
 static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
@@ -396,6 +380,7 @@ static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
 	unsigned long phys_addr;
 	struct sgx_encl *encl;
 	u64 secinfo_flags;
+	bool eauged = false;
 	vm_fault_t ret;
 
 	encl = vma->vm_private_data;
@@ -452,13 +437,25 @@ static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
 			/* At this point, keep the entry even if eaug failed */
 			entry->desc |= SGX_ENCL_PAGE_TO_EAUG;
 		}
-
-		return sgx_encl_eaug_page(vma, entry);
+		switch (sgx_encl_eaug_page(vma, entry)) {
+		case 0:
+			/* To insert new PTE without clearing access bit */
+			eauged = true;
+			break;
+		case -EBUSY:
+			return VM_FAULT_NOPAGE;
+		case -ENOMEM:
+			return VM_FAULT_OOM;
+		case -EFAULT:
+		default:
+			return VM_FAULT_SIGBUS;
+		}
 	}
 
 	mutex_lock(&encl->lock);
 
-	entry = sgx_encl_load_page_in_vma(encl, addr, vma->vm_flags);
+	if (!eauged)
+		entry = sgx_encl_load_page_in_vma(encl, addr, vma->vm_flags);
 	if (IS_ERR(entry)) {
 		mutex_unlock(&encl->lock);
 
@@ -477,7 +474,9 @@ static vm_fault_t sgx_vma_fault(struct vm_fault *vmf)
 		return VM_FAULT_SIGBUS;
 	}
 
-	sgx_encl_test_and_clear_young(vma->vm_mm, entry);
+	if (!eauged)
+		sgx_encl_test_and_clear_young(vma->vm_mm, entry);
+
 	mutex_unlock(&encl->lock);
 
 	return VM_FAULT_NOPAGE;
