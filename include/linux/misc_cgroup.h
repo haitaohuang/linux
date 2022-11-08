@@ -37,6 +37,11 @@ struct misc_res {
 	u64 max;
 	atomic64_t usage;
 	atomic64_t events;
+
+	/* per resource callback ops */
+	int (*alloc)(struct misc_cg *cg);
+	void (*free)(struct misc_cg *cg);
+	void (*max_write)(struct misc_cg *cg);
 };
 
 /**
