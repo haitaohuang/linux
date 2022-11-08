@@ -28,15 +28,29 @@ struct misc_cg;
 #include <linux/cgroup.h>
 
 /**
+ * struct misc_operations_struct: per resource callback ops.
+ * @alloc: invoked for resource specific initialization when cgroup is allocated.
+ * @free: invoked for resource specific cleanup when cgroup is deallocated.
+ */
+struct misc_operations_struct {
+	int (*alloc)(struct misc_cg *cg);
+	void (*free)(struct misc_cg *cg);
+};
+
+/**
  * struct misc_res: Per cgroup per misc type resource
  * @max: Maximum limit on the resource.
  * @usage: Current usage of the resource.
- * @failed: True if charged failed for the resource in a cgroup.
+ * @events: Number of times, the resource limit exceeded.
+ * @priv: resource specific data.
+ * @misc_ops: resource specific operations.
  */
 struct misc_res {
 	u64 max;
 	atomic64_t usage;
 	atomic64_t events;
+	void *priv;
+	const struct misc_operations_struct *misc_ops;
 };
 
 /**
