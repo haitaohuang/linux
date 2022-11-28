@@ -19,6 +19,11 @@
 
 #define SGX_MAX_EPC_SECTIONS		8
 #define SGX_EEXTEND_BLOCK_SIZE		256
+
+/*
+ * Maximum number of pages to scan for reclaiming.
+ */
+#define SGX_NR_TO_SCAN_MAX		32UL
 #define SGX_NR_TO_SCAN			16
 #define SGX_NR_LOW_PAGES		32
 #define SGX_NR_HIGH_PAGES		64
@@ -70,6 +75,8 @@ enum sgx_epc_page_state {
 /* flag for pages owned by a sgx_encl struct */
 #define SGX_EPC_OWNER_ENCL		BIT(4)
 
+struct sgx_epc_cgroup;
+
 struct sgx_epc_page {
 	unsigned int section;
 	u16 flags;
@@ -81,6 +88,7 @@ struct sgx_epc_page {
 		struct sgx_encl *encl;
 	};
 	struct list_head list;
+	struct sgx_epc_cgroup *epc_cg;
 };
 
 static inline void sgx_epc_page_reset_state(struct sgx_epc_page *page)
@@ -129,6 +137,7 @@ struct sgx_epc_section {
 	struct sgx_numa_node *node;
 };
 
+extern u64 sgx_epc_total_pages;
 extern struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 
 static inline unsigned long sgx_get_epc_phys_addr(struct sgx_epc_page *page)
@@ -152,7 +161,8 @@ static inline void *sgx_get_epc_virt_addr(struct sgx_epc_page *page)
 }
 
 /*
- * Contains EPC pages tracked by the reclaimer (ksgxd).
+ * Contains EPC pages tracked by the global reclaimer (ksgxd) or an EPC
+ * cgroup.
  */
 struct sgx_epc_lru_lists {
 	spinlock_t lock;
@@ -179,8 +189,9 @@ void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags);
 int sgx_drop_epc_page(struct sgx_epc_page *page);
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim);
 bool sgx_epc_oom(struct sgx_epc_lru_lists *lrus);
-size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age);
-void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lrus, size_t nr_to_scan,
+size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age,
+			     struct sgx_epc_cgroup *epc_cg);
+void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lrus, size_t *nr_to_scan,
 			   struct list_head *dst);
 
 void sgx_ipi_cb(void *info);
