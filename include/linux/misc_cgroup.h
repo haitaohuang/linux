@@ -18,6 +18,10 @@ enum misc_res_type {
 	/* AMD SEV-ES ASIDs resource */
 	MISC_CG_RES_SEV_ES,
 #endif
+#ifdef CONFIG_X86_SGX
+	/* SGX EPC memory resource */
+	MISC_CG_RES_SGX_EPC,
+#endif
 	MISC_CG_RES_TYPES
 };
 
