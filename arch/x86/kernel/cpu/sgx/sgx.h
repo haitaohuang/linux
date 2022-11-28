@@ -40,6 +40,8 @@
 /* flag for pages used for Version Array (VA) */
 #define SGX_EPC_PAGE_VERSION_ARRAY	BIT(5)
 
+struct sgx_epc_cgroup;
+
 struct sgx_epc_page {
 	unsigned int section;
 	u16 flags;
@@ -51,6 +53,7 @@ struct sgx_epc_page {
 		struct sgx_encl *encl;
 	};
 	struct list_head list;
+	struct sgx_epc_cgroup *epc_cg;
 };
 
 /*
@@ -155,7 +158,8 @@ void sgx_reclaim_direct(void);
 void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags);
 int sgx_drop_epc_page(struct sgx_epc_page *page);
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim);
-int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age);
+int sgx_reclaim_epc_pages(int nr_to_scan, bool ignore_age,
+			  struct sgx_epc_cgroup *epc_cg);
 void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lrus, int *nr_to_scan,
 			   struct list_head *dst);
 bool sgx_epc_oom(struct sgx_epc_lru_lists *lrus);
