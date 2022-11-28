@@ -6,6 +6,7 @@
 #include <linux/highmem.h>
 #include <linux/kthread.h>
 #include <linux/miscdevice.h>
+#include <linux/misc_cgroup.h>
 #include <linux/node.h>
 #include <linux/pagemap.h>
 #include <linux/ratelimit.h>
@@ -17,11 +18,9 @@
 #include "driver.h"
 #include "encl.h"
 #include "encls.h"
-/**
- * Maximum number of pages to scan for reclaiming.
- */
-#define SGX_NR_TO_SCAN_MAX	32
+#include "epc_cgroup.h"
 
+u64 sgx_epc_total_pages;
 struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 static int sgx_nr_epc_sections;
 static struct task_struct *ksgxd_tsk;
@@ -36,11 +35,17 @@ static struct sgx_epc_lru_lists sgx_global_lru;
 
 static inline struct sgx_epc_lru_lists *sgx_lru_lists(struct sgx_epc_page *epc_page)
 {
+	if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
+		return epc_cg_lru(epc_page->epc_cg);
+
 	return &sgx_global_lru;
 }
 
 static inline bool sgx_can_reclaim(void)
 {
+	if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
+		return !sgx_epc_cgroup_lru_empty(NULL);
+
 	return !list_empty(&sgx_global_lru.reclaimable);
 }
 
@@ -299,14 +304,14 @@ out:
  * @nr_to_scan:	Number of pages to scan for reclaim
  * @dst:	Destination list to hold the isolated pages
  */
-void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lru, size_t nr_to_scan,
+void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lru, size_t *nr_to_scan,
 			   struct list_head *dst)
 {
 	struct sgx_encl_page *encl_page;
 	struct sgx_epc_page *epc_page;
 
 	spin_lock(&lru->lock);
-	for (; nr_to_scan > 0; --nr_to_scan) {
+	for (; *nr_to_scan > 0; --(*nr_to_scan)) {
 		epc_page = list_first_entry_or_null(&lru->reclaimable, struct sgx_epc_page, list);
 		if (!epc_page)
 			break;
@@ -331,6 +336,7 @@ void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lru, size_t nr_to_scan,
  * sgx_reclaim_epc_pages() - Reclaim EPC pages from the consumers
  * @nr_to_scan:		 Number of EPC pages to scan for reclaim
  * @ignore_age:		 Reclaim a page even if it is young
+ * @epc_cg:		 EPC cgroup from which to reclaim
  *
  * Take a fixed number of pages from the head of the active page pool and
  * reclaim them to the enclave's private shmem files. Skip the pages, which have
@@ -344,7 +350,8 @@ void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lru, size_t nr_to_scan,
  * problematic as it would increase the lock contention too much, which would
  * halt forward progress.
  */
-size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age)
+size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age,
+			     struct sgx_epc_cgroup *epc_cg)
 {
 	struct sgx_backing backing[SGX_NR_TO_SCAN_MAX];
 	struct sgx_epc_page *epc_page, *tmp;
@@ -355,7 +362,15 @@ size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age)
 	size_t ret;
 	size_t i;
 
-	sgx_isolate_epc_pages(&sgx_global_lru, nr_to_scan, &iso);
+	/*
+	 * If a specific cgroup is not being targeted, take from the global
+	 * list first, even when cgroups are enabled.  If there are
+	 * pages on the global LRU then they should get reclaimed asap.
+	 */
+	if (!IS_ENABLED(CONFIG_CGROUP_SGX_EPC) || !epc_cg)
+		sgx_isolate_epc_pages(&sgx_global_lru, &nr_to_scan, &iso);
+
+	sgx_epc_cgroup_isolate_pages(epc_cg, &nr_to_scan, &iso);
 
 	if (list_empty(&iso))
 		return 0;
@@ -422,7 +437,7 @@ static bool sgx_should_reclaim(unsigned long watermark)
 void sgx_reclaim_direct(void)
 {
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
-		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false);
+		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false, NULL);
 }
 
 static int ksgxd(void *p)
@@ -445,7 +460,7 @@ static int ksgxd(void *p)
 				     sgx_should_reclaim(SGX_NR_HIGH_PAGES));
 
 		if (sgx_should_reclaim(SGX_NR_HIGH_PAGES))
-			sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false);
+			sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false, NULL);
 
 		cond_resched();
 	}
@@ -599,6 +614,11 @@ int sgx_drop_epc_page(struct sgx_epc_page *page)
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 {
 	struct sgx_epc_page *page;
+	struct sgx_epc_cgroup *epc_cg;
+
+	epc_cg = sgx_epc_cgroup_try_charge(reclaim);
+	if (IS_ERR(epc_cg))
+		return ERR_CAST(epc_cg);
 
 	for ( ; ; ) {
 		page = __sgx_alloc_epc_page();
@@ -607,8 +627,10 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 			break;
 		}
 
-		if (!sgx_can_reclaim())
-			return ERR_PTR(-ENOMEM);
+		if (!sgx_can_reclaim()) {
+			page = ERR_PTR(-ENOMEM);
+			break;
+		}
 
 		if (!reclaim) {
 			page = ERR_PTR(-EBUSY);
@@ -620,8 +642,15 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 			break;
 		}
 
-		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false);
+		sgx_reclaim_epc_pages(SGX_NR_TO_SCAN, false, NULL);
 		cond_resched();
+	}
+
+	if (!IS_ERR(page)) {
+		WARN_ON_ONCE(page->epc_cg);
+		page->epc_cg = epc_cg;
+	} else {
+		sgx_epc_cgroup_uncharge(epc_cg);
 	}
 
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
@@ -646,6 +675,11 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 
 	WARN_ON_ONCE(page->flags & (SGX_EPC_PAGE_STATE_MASK));
 
+	if (page->epc_cg) {
+		sgx_epc_cgroup_uncharge(page->epc_cg);
+		page->epc_cg = NULL;
+	}
+
 	spin_lock(&node->lock);
 
 	page->encl_page = NULL;
@@ -656,6 +690,7 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	page->flags = SGX_EPC_PAGE_FREE;
 
 	spin_unlock(&node->lock);
+
 	atomic_long_inc(&sgx_nr_free_pages);
 }
 
@@ -825,6 +860,7 @@ static bool __init sgx_setup_epc_section(u64 phys_addr, u64 size,
 		section->pages[i].flags = 0;
 		section->pages[i].encl_page = NULL;
 		section->pages[i].poison = 0;
+		section->pages[i].epc_cg = NULL;
 		list_add_tail(&section->pages[i].list, &sgx_dirty_page_list);
 	}
 
@@ -969,6 +1005,7 @@ static void __init arch_update_sysfs_visibility(int nid) {}
 static bool __init sgx_page_cache_init(void)
 {
 	u32 eax, ebx, ecx, edx, type;
+	u64 capacity = 0;
 	u64 pa, size;
 	int nid;
 	int i;
@@ -1019,6 +1056,7 @@ static bool __init sgx_page_cache_init(void)
 
 		sgx_epc_sections[i].node =  &sgx_numa_nodes[nid];
 		sgx_numa_nodes[nid].size += size;
+		capacity += size;
 
 		sgx_nr_epc_sections++;
 	}
@@ -1027,6 +1065,9 @@ static bool __init sgx_page_cache_init(void)
 		pr_err("There are zero EPC sections.\n");
 		return false;
 	}
+
+	misc_cg_set_capacity(MISC_CG_RES_SGX_EPC, capacity);
+	sgx_epc_total_pages = capacity >> PAGE_SHIFT;
 
 	return true;
 }
