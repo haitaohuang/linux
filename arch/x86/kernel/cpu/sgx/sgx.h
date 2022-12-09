@@ -152,17 +152,23 @@ static inline void *sgx_get_epc_virt_addr(struct sgx_epc_page *page)
 }
 
 /*
- * Tracks EPC pages reclaimable by the reclaimer (ksgxd).
+ * Contains EPC pages tracked by the reclaimer (ksgxd).
  */
 struct sgx_epc_lru_lists {
 	spinlock_t lock;
 	struct list_head reclaimable;
+	/*
+	 * Tracks SECS, VA pages,etc., pages only freeable after all its
+	 * dependent reclaimables are freed.
+	 */
+	struct list_head unreclaimable;
 };
 
 static inline void sgx_lru_init(struct sgx_epc_lru_lists *lrus)
 {
 	spin_lock_init(&lrus->lock);
 	INIT_LIST_HEAD(&lrus->reclaimable);
+	INIT_LIST_HEAD(&lrus->unreclaimable);
 }
 
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
