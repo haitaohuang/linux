@@ -136,6 +136,14 @@ static inline struct sgx_epc_page * sgx_lru_pop(struct list_head *list)
 	return epc_page;
 }
 
+/*
+ * Must be called with queue lock acquired
+ */
+static inline struct sgx_epc_page * sgx_lru_peek(struct list_head *list)
+{
+	return list_first_entry_or_null(list, struct sgx_epc_page, list);
+}
+
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
 void sgx_free_epc_page(struct sgx_epc_page *page);
 
