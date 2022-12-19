@@ -35,6 +35,10 @@
 #define SGX_EPC_PAGE_KVM_GUEST		BIT(2)
 /* page flag to indicate reclaim is in progress */
 #define SGX_EPC_PAGE_RECLAIM_IN_PROGRESS BIT(3)
+/* flag for SECS or normal EPC pages */
+#define SGX_EPC_PAGE_ENCLAVE		BIT(4)
+/* flag for pages used for Version Array (VA) */
+#define SGX_EPC_PAGE_VERSION_ARRAY	BIT(5)
 
 struct sgx_epc_page {
 	unsigned int section;
