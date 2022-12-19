@@ -64,6 +64,12 @@ enum sgx_epc_page_state {
 
 #define SGX_EPC_PAGE_STATE_MASK GENMASK(2, 0)
 
+/* flag for pages owned by a sgx_encl_page */
+#define SGX_EPC_OWNER_PAGE		BIT(3)
+
+/* flag for pages owned by a sgx_encl struct */
+#define SGX_EPC_OWNER_ENCL		BIT(4)
+
 struct sgx_epc_page {
 	unsigned int section;
 	u16 flags;
