@@ -239,8 +239,11 @@ static struct sgx_epc_page *sgx_encl_load_secs(struct sgx_encl *encl)
 {
 	struct sgx_epc_page *epc_page = encl->secs.epc_page;
 
-	if (!epc_page)
+	if (!epc_page) {
 		epc_page = sgx_encl_eldu(&encl->secs, NULL);
+		if (!IS_ERR(epc_page))
+			epc_page->flags |= SGX_EPC_OWNER_PAGE;
+	}
 
 	return epc_page;
 }
@@ -268,6 +271,7 @@ static struct sgx_encl_page *__sgx_encl_load_page(struct sgx_encl *encl,
 
 	encl->secs_child_cnt++;
 	sgx_mark_page_reclaimable(entry->epc_page);
+	entry->epc_page->flags |= SGX_EPC_OWNER_PAGE;
 
 	return entry;
 }
@@ -394,6 +398,7 @@ static vm_fault_t sgx_encl_eaug_page(struct vm_area_struct *vma,
 	encl->secs_child_cnt++;
 
 	sgx_mark_page_reclaimable(encl_page->epc_page);
+	encl_page->epc_page->flags |= SGX_EPC_OWNER_PAGE;
 
 	phys_addr = sgx_get_epc_phys_addr(epc_page);
 	/*
@@ -1250,6 +1255,7 @@ struct sgx_epc_page *sgx_alloc_va_page(struct sgx_encl *encl, bool reclaim)
 		sgx_encl_free_epc_page(epc_page);
 		return ERR_PTR(-EFAULT);
 	}
+	epc_page->flags |= SGX_EPC_OWNER_ENCL;
 
 	return epc_page;
 }
