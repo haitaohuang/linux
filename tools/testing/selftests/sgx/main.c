@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -1358,6 +1359,210 @@ TEST_F_TIMEOUT(enclave, augment_via_eaccept_long, TIMEOUT_DEFAULT)
 	EXPECT_EQ(self->run.exception_addr, 0);
 
 	munmap(addr, DYNAMIC_HEAP_SIZE);
+}
+
+static int eaccept_range(struct _test_data_enclave *self, void *addr,
+			 unsigned long size, uint64_t flags,
+						struct __test_metadata *_metadata)
+{
+	struct encl_op_eaccept eaccept_op;
+
+	self->run.exception_vector = 0;
+	self->run.exception_error_code = 0;
+	self->run.exception_addr = 0;
+
+	/*
+	 * Run EACCEPT on every page to trigger the #PF->EAUG->EACCEPT(again
+	 * without a #PF). All should be transparent to userspace.
+	 */
+	eaccept_op.flags = flags;
+	eaccept_op.ret = 0;
+	eaccept_op.header.type = ENCL_OP_EACCEPT;
+	eaccept_op.len = size;
+	eaccept_op.epc_addr = (uint64_t)(addr);
+
+	EXPECT_EQ(ENCL_CALL(&eaccept_op, &self->run, true), 0);
+
+	EXPECT_EQ(self->run.exception_vector, 0);
+	EXPECT_EQ(self->run.exception_error_code, 0);
+	EXPECT_EQ(self->run.exception_addr, 0);
+	ASSERT_EQ(eaccept_op.ret, 0);
+	ASSERT_EQ(self->run.function, EEXIT);
+
+	return 0;
+}
+
+static int trim_remove_range(struct _test_data_enclave *self, void *addr,
+			     unsigned long size, struct __test_metadata *_metadata)
+{
+	int ret, errno_save;
+	struct sgx_enclave_remove_pages remove_ioc;
+	struct sgx_enclave_modify_types modt_ioc;
+	unsigned long offset;
+	unsigned long count;
+
+	if ((uint64_t)addr <= self->encl.encl_base)
+		return -1;
+	offset = (uint64_t)addr - self->encl.encl_base;
+
+	memset(&modt_ioc, 0, sizeof(modt_ioc));
+	modt_ioc.offset = offset;
+	modt_ioc.length = size;
+	modt_ioc.page_type = SGX_PAGE_TYPE_TRIM;
+	count = 0;
+	do {
+		ret = ioctl(self->encl.fd, SGX_IOC_ENCLAVE_MODIFY_TYPES, &modt_ioc);
+
+		errno_save = ret == -1 ? errno : 0;
+		if (errno_save != EAGAIN)
+			break;
+		EXPECT_EQ(modt_ioc.result, 0);
+
+		count += modt_ioc.count;
+		modt_ioc.offset += modt_ioc.count;
+		modt_ioc.length -= modt_ioc.count;
+		modt_ioc.result = 0;
+		modt_ioc.count = 0;
+	} while (modt_ioc.length != 0);
+
+	EXPECT_EQ(ret, 0);
+	EXPECT_EQ(errno_save, 0);
+	EXPECT_EQ(modt_ioc.result, 0);
+	count += modt_ioc.count;
+	EXPECT_EQ(count, size);
+
+	EXPECT_EQ(eaccept_range(self, addr, size,
+				SGX_SECINFO_TRIM | SGX_SECINFO_MODIFIED,
+				   _metadata), 0);
+
+	/* Complete page removal. */
+	memset(&remove_ioc, 0, sizeof(remove_ioc));
+	remove_ioc.offset = offset;
+	remove_ioc.length = size;
+	count = 0;
+	do {
+		ret = ioctl(self->encl.fd, SGX_IOC_ENCLAVE_REMOVE_PAGES, &remove_ioc);
+
+		errno_save = ret == -1 ? errno : 0;
+		if (errno_save != EAGAIN)
+			break;
+
+		count += remove_ioc.count;
+		remove_ioc.offset += remove_ioc.count;
+		remove_ioc.length -= remove_ioc.count;
+		remove_ioc.count = 0;
+	} while (remove_ioc.length != 0);
+
+	EXPECT_EQ(ret, 0);
+	EXPECT_EQ(errno_save, 0);
+	count += remove_ioc.count;
+	EXPECT_EQ(count, size);
+
+	return 0;
+}
+
+static int ioctl_eaug(unsigned long offset, unsigned long length, int encl_fd,
+		      struct __test_metadata *_metadata)
+{
+	struct sgx_enclave_augment_pages eaug_ioc;
+	struct sgx_secinfo secinfo;
+	unsigned long count = 0;
+	int ret, errno_save;
+
+	memset(&eaug_ioc, 0, sizeof(eaug_ioc));
+	eaug_ioc.offset = offset;
+	eaug_ioc.length = length;
+	eaug_ioc.flags |= SGX_PAGE_POPULATE;
+
+	memset(&secinfo, 0, sizeof(secinfo));
+	secinfo.flags |= SGX_SECINFO_R | SGX_SECINFO_W | SGX_SECINFO_REG;
+	eaug_ioc.secinfo = (unsigned long)&secinfo;
+	do {
+		ret = ioctl(encl_fd, SGX_IOC_ENCLAVE_AUGMENT_PAGES, &eaug_ioc);
+
+		errno_save = ret == -1 ? errno : 0;
+		if (errno_save != EAGAIN)
+			break;
+
+		count += eaug_ioc.count;
+		eaug_ioc.offset += eaug_ioc.count;
+		eaug_ioc.length -= eaug_ioc.count;
+		eaug_ioc.count = 0;
+	} while (eaug_ioc.length != 0);
+
+	EXPECT_EQ(ret, 0);
+	EXPECT_EQ(errno_save, 0);
+	count += eaug_ioc.count;
+	EXPECT_EQ(count, length);
+
+	return 0;
+}
+
+/*
+ * Compare performance with and without ioctl call before EACCEPT'ing
+ * different size of regions.
+ */
+TEST_F_TIMEOUT(enclave, augment_via_ioctl, TIMEOUT_DEFAULT)
+{
+	unsigned long max_populate_size = get_total_epc_mem() * 3UL;
+	unsigned long populate_size = PAGE_SIZE;
+	double time_used1, time_used2;
+	size_t total_size = 0;
+	int speed_up_percent;
+	unsigned long i;
+	clock_t start;
+	void *addr;
+
+	if (!sgx2_supported())
+		SKIP(return, "SGX2 not supported");
+
+	ASSERT_TRUE(setup_test_encl_dynamic(ENCL_HEAP_SIZE_DEFAULT,
+					    max_populate_size, &self->encl, _metadata));
+
+	memset(&self->run, 0, sizeof(self->run));
+	self->run.tcs = self->encl.encl_base;
+
+	for (i = 0; i < self->encl.nr_segments; i++) {
+		struct encl_segment *seg = &self->encl.segment_tbl[i];
+
+		total_size += seg->size;
+	}
+
+	for (i = 1; i < 52 && populate_size < max_populate_size; i++) {
+		addr = mmap((void *)self->encl.encl_base + total_size, populate_size,
+			    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED,
+					self->encl.fd, 0);
+		EXPECT_NE(addr, MAP_FAILED);
+
+		start = clock();
+		EXPECT_EQ(eaccept_range(self, addr, populate_size,
+					SGX_SECINFO_R | SGX_SECINFO_W
+								| SGX_SECINFO_REG
+								| SGX_SECINFO_PENDING,
+								_metadata), 0);
+		time_used1 = (double)clock() - start;
+
+		EXPECT_EQ(trim_remove_range(self, addr, populate_size, _metadata), 0);
+
+		start = clock();
+		EXPECT_EQ(ioctl_eaug((unsigned long)(addr - self->encl.encl_base), populate_size,
+				     self->encl.fd, _metadata), 0);
+		EXPECT_EQ(eaccept_range(self, addr, populate_size,
+					SGX_SECINFO_R | SGX_SECINFO_W
+								| SGX_SECINFO_REG
+								| SGX_SECINFO_PENDING,
+								_metadata), 0);
+		time_used2 = (double)clock() - start;
+
+		speed_up_percent = (int)((time_used1 - time_used2) / time_used1 * 100);
+		TH_LOG("POPULATE speed up for eaug'ing %10ld pages: %d%%",
+		       populate_size / PAGE_SIZE, speed_up_percent);
+		EXPECT_GE(speed_up_percent, 0);
+		EXPECT_EQ(trim_remove_range(self, addr, populate_size, _metadata), 0);
+		munmap(addr, populate_size);
+		populate_size = (populate_size << 1UL);
+	}
+	encl_delete(&self->encl);
 }
 
 /*
