@@ -59,6 +59,13 @@ static void do_user_cp_fault(struct pt_regs *regs, unsigned long error_code)
 
 	cond_local_irq_enable(regs);
 
+	if (fixup_vdso_exception(regs, X86_TRAP_CP, error_code, 0))
+		goto exit;
+
+	if (!cpu_feature_enabled(X86_FEATURE_USER_SHSTK)) {
+		do_unexpected_cp(regs, error_code);
+		goto exit;
+	}
 	tsk = current;
 	tsk->thread.error_code = error_code;
 	tsk->thread.trap_nr = X86_TRAP_CP;
@@ -76,6 +83,7 @@ static void do_user_cp_fault(struct pt_regs *regs, unsigned long error_code)
 	}
 
 	force_sig_fault(SIGSEGV, SEGV_CPERR, (void __user *)0);
+exit:
 	cond_local_irq_disable(regs);
 }
 
@@ -139,10 +147,7 @@ __setup("ibt=", ibt_setup);
 DEFINE_IDTENTRY_ERRORCODE(exc_control_protection)
 {
 	if (user_mode(regs)) {
-		if (cpu_feature_enabled(X86_FEATURE_USER_SHSTK))
 			do_user_cp_fault(regs, error_code);
-		else
-			do_unexpected_cp(regs, error_code);
 	} else {
 		if (cpu_feature_enabled(X86_FEATURE_IBT))
 			do_kernel_cp_fault(regs, error_code);
