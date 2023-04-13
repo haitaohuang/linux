@@ -1266,9 +1266,10 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 {
 	struct sgx_enclave_augment_pages params;
 	struct sgx_encl_page *encl_page;
-	unsigned long c, start, end;
+	unsigned long c = 0, start, end;
 	struct sgx_secinfo secinfo;
 	struct vm_area_struct *vma;
+	unsigned long populate = 0;
 	long ret = 0;
 
 	ret = sgx_ioc_sgx2_ready(encl);
@@ -1318,10 +1319,10 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 		ret = -EACCES;
 	}
 
-	mmap_read_unlock(current->mm);
 	if (ret)
-		return ret;
+		goto unlock;
 
+	populate = params.flags & SGX_PAGE_POPULATE;
 	for (c = 0 ; c < params.length; c += PAGE_SIZE) {
 		encl_page = sgx_encl_page_alloc(encl, params.offset + c, secinfo.flags);
 		if (IS_ERR(encl_page)) {
@@ -1341,9 +1342,21 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 
 		if (params.flags & SGX_PAGE_CET_SSA)
 			encl_page->type |= SGX_PAGE_EXTRA_TYPE_CET_SSA;
+		/* Keep the record even if eaug failed */
 		encl_page->desc |= SGX_ENCL_PAGE_TO_EAUG;
+		if (populate) {
+			ret = sgx_encl_eaug_page(vma, encl_page);
+			if (ret == -EBUSY) {
+				ret = 0;
+				populate = 0;
+			} else if (ret) {
+				break;
+			}
+		}
 	}
 
+unlock:
+	mmap_read_unlock(current->mm);
 	params.count = c;
 	if (copy_to_user(arg, &params, sizeof(params)))
 		return -EFAULT;

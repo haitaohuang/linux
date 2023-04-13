@@ -15,10 +15,13 @@
  * %SGX_PAGE_CET_SSA:		To be used as CET_SSA, PT_SS_REST in EPCM,
  *					but accessed as regular RW in PTE,
  *					i.e., no #PF with PFEC.SS=1
+ * %SGX_PAGE_POPULATE:		To alloc and EAUG("populate") EPC pages as soon
+ *				as possible.
  */
 enum sgx_page_flags {
 	SGX_PAGE_MEASURE	= 0x01,
 	SGX_PAGE_CET_SSA	= 0x02,
+	SGX_PAGE_POPULATE	= 0x04,
 };
 
 #define SGX_MAGIC 0xA4
