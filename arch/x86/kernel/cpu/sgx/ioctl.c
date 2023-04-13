@@ -1249,10 +1249,10 @@ static int sgx_validate_secinfo_for_eaug(struct sgx_secinfo *secinfo)
  * @arg:	a user pointer to a struct sgx_enclave_augment_pages instance
  *
  * Add one or more pages to an initialized enclave. VMA for the range should
- * have already configured with VM_READ | VM_WRITE at minimum.
- * Three types of pages can be EAUG'd: PT_{REG, SS_FIRST, SS_REST}
- * Note: current implementation does EAUG on PF only. This ioctl can be extended
- * to do EAUG immediately in future as indicated by a bit set in arg.flags
+ * have already configured with VM_READ | VM_WRITE at minimum.  Three types of
+ * pages can be EAUG'd: PT_{REG, SS_FIRST, SS_REST} Note: current implementation
+ * does EAUG on PF only. This ioctl can be extended to do EAUG immediately in
+ * future as indicated by the SGX_PAGE_POPULATE bit in arg.flags
  * Return:
  * - 0:		Success.
  * - -errno:	Otherwise.
@@ -1261,9 +1261,11 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 {
 	struct sgx_enclave_augment_pages params;
 	struct sgx_encl_page *encl_page;
-	unsigned long c, start, end;
+	unsigned long c = 0, start, end;
 	struct sgx_secinfo secinfo;
 	struct vm_area_struct *vma;
+	unsigned long populate = 0;
+	unsigned long phys_addr;
 	long ret = 0;
 
 	ret = sgx_ioc_sgx2_ready(encl);
@@ -1300,10 +1302,10 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 		ret = -EACCES;
 	}
 
-	mmap_read_unlock(current->mm);
 	if (ret)
-		return ret;
+		goto unlock;
 
+	populate = params.flags & SGX_PAGE_POPULATE;
 	for (c = 0 ; c < params.length; c += PAGE_SIZE) {
 		encl_page = sgx_encl_page_alloc(encl, params.offset + c, secinfo.flags);
 		if (IS_ERR(encl_page)) {
@@ -1321,9 +1323,28 @@ static long sgx_ioc_enclave_augment_pages(struct sgx_encl *encl, void __user *ar
 			break;
 		}
 
+		/* Keep the record even if eaug failed */
 		encl_page->desc |= SGX_ENCL_PAGE_TO_EAUG;
+		if (populate) {
+			ret = sgx_encl_eaug_page(vma, encl_page);
+
+			if (!ret) {
+				phys_addr = sgx_get_epc_phys_addr(encl_page->epc_page);
+				ret = remap_pfn_range(vma, encl_page->desc & PAGE_MASK,
+					PFN_DOWN(phys_addr), PAGE_SIZE, vma->vm_page_prot);
+			} else if (ret == -EBUSY) {
+				/* Stop populating but continue to alloc */
+				ret = 0;
+				populate = 0;
+			}
+
+			if (ret)
+				break;
+		}
 	}
 
+unlock:
+	mmap_read_unlock(current->mm);
 	params.count = c;
 	if (copy_to_user(arg, &params, sizeof(params)))
 		return -EFAULT;
