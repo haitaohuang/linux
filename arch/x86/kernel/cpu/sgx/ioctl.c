@@ -312,9 +312,7 @@ static int sgx_encl_add_page(struct sgx_encl *encl, unsigned long src,
 	 * isn't in a half-baked state in the extremely unlikely scenario
 	 * the enclave will be destroyed in response to EEXTEND failure.
 	 */
-	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
-	encl_page->type = (secinfo->flags & SGX_SECINFO_PAGE_TYPE_MASK) >> 8;
 	if (flags & SGX_PAGE_CET_SSA)
 		encl_page->type |= SGX_PAGE_EXTRA_TYPE_CET_SSA;
 
