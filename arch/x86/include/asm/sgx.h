@@ -268,6 +268,8 @@ struct sgx_pageinfo {
  * %SGX_PAGE_TYPE_REG:	a regular page
  * %SGX_PAGE_TYPE_VA:	a VA page
  * %SGX_PAGE_TYPE_TRIM:	a page in trimmed state
+ * %SGX_PAGE_TYPE_SS_FIRST:	a page is first page of a shadow stack
+ * %SGX_PAGE_TYPE_SS_REST:	a page is not first page of a shadow stack
  *
  * Make sure when making changes to this enum that its values can still fit
  * in the bitfield within &struct sgx_encl_page
@@ -278,9 +280,11 @@ enum sgx_page_type {
 	SGX_PAGE_TYPE_REG,
 	SGX_PAGE_TYPE_VA,
 	SGX_PAGE_TYPE_TRIM,
+	SGX_PAGE_TYPE_SS_FIRST,
+	SGX_PAGE_TYPE_SS_REST,
 };
 
-#define SGX_NR_PAGE_TYPES	5
+#define SGX_NR_PAGE_TYPES	7
 #define SGX_PAGE_TYPE_MASK	GENMASK(7, 0)
 
 /**
@@ -293,6 +297,8 @@ enum sgx_page_type {
  * %SGX_SECINFO_REG:	a regular page
  * %SGX_SECINFO_VA:	a VA page
  * %SGX_SECINFO_TRIM:	a page in trimmed state
+ * %SGX_SECINFO_SS_FIRST:	a page is first page of a shadow stack
+ * %SGX_SECINFO_SS_REST:	a page is not first page of a shadow stack
  */
 enum sgx_secinfo_flags {
 	SGX_SECINFO_R			= BIT(0),
@@ -303,6 +309,8 @@ enum sgx_secinfo_flags {
 	SGX_SECINFO_REG			= (SGX_PAGE_TYPE_REG << 8),
 	SGX_SECINFO_VA			= (SGX_PAGE_TYPE_VA << 8),
 	SGX_SECINFO_TRIM		= (SGX_PAGE_TYPE_TRIM << 8),
+	SGX_SECINFO_SS_FIRST		= (SGX_PAGE_TYPE_SS_FIRST << 8),
+	SGX_SECINFO_SS_REST		= (SGX_PAGE_TYPE_SS_REST << 8),
 };
 
 #define SGX_SECINFO_PERMISSION_MASK	GENMASK_ULL(2, 0)
@@ -433,5 +441,7 @@ int sgx_virt_einit(void __user *sigstruct, void __user *token,
 
 int sgx_set_attribute(unsigned long *allowed_attributes,
 		      unsigned int attribute_fd);
+struct vm_area_struct;
+bool sgx_enclave_vma(struct vm_area_struct* vma);
 
 #endif /* _ASM_X86_SGX_H */

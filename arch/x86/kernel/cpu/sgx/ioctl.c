@@ -174,7 +174,8 @@ static int sgx_validate_secinfo(struct sgx_secinfo *secinfo)
 	u64 perm = secinfo->flags & SGX_SECINFO_PERMISSION_MASK;
 	u64 pt   = secinfo->flags & SGX_SECINFO_PAGE_TYPE_MASK;
 
-	if (pt != SGX_SECINFO_REG && pt != SGX_SECINFO_TCS)
+	if (pt != SGX_SECINFO_REG && pt != SGX_SECINFO_TCS &&
+	    pt != SGX_SECINFO_SS_FIRST && pt != SGX_SECINFO_SS_REST)
 		return -EINVAL;
 
 	if ((perm & SGX_SECINFO_W) && !(perm & SGX_SECINFO_R))
@@ -314,6 +315,7 @@ static int sgx_encl_add_page(struct sgx_encl *encl, unsigned long src,
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
 	encl_page->type = (secinfo->flags & SGX_SECINFO_PAGE_TYPE_MASK) >> 8;
+
 	encl->secs_child_cnt++;
 
 	if (flags & SGX_PAGE_MEASURE) {
