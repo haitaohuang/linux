@@ -111,6 +111,7 @@ enum sgx_miscselect {
  * %SGX_ATTR_MODE64BIT:		Tell that this a 64-bit enclave.
  * %SGX_ATTR_PROVISIONKEY:      Allow to use provisioning keys for remote
  *				attestation.
+ * %SGX_ATTR_CET:		Allow to use CET
  * %SGX_ATTR_KSS:		Allow to use key separation and sharing (KSS).
  * %SGX_ATTR_EINITTOKENKEY:	Allow to use token signing key that is used to
  *				sign cryptographic tokens that can be passed to
@@ -125,7 +126,7 @@ enum sgx_attribute {
 				  /* BIT(3) is reserved */
 	SGX_ATTR_PROVISIONKEY	   = BIT(4),
 	SGX_ATTR_EINITTOKENKEY	   = BIT(5),
-				  /* BIT(6) is for CET */
+	SGX_ATTR_CET		   = BIT(6),	/* BIT(6) is for CET */
 	SGX_ATTR_KSS		   = BIT(7),
 				  /* BIT(8) is reserved */
 				  /* BIT(9) is reserved */
@@ -133,13 +134,13 @@ enum sgx_attribute {
 };
 
 #define SGX_ATTR_RESERVED_MASK	(BIT_ULL(3) | \
-				 BIT_ULL(6) | \
 				 BIT_ULL(8) | \
 				 BIT_ULL(9) | \
 				 GENMASK_ULL(63, 11))
 
 #define SGX_ATTR_UNPRIV_MASK	(SGX_ATTR_DEBUG	    | \
 				 SGX_ATTR_MODE64BIT | \
+				 SGX_ATTR_CET	    | \
 				 SGX_ATTR_KSS	    | \
 				 SGX_ATTR_ASYNC_EXIT_NOTIFY)
 
@@ -152,6 +153,8 @@ enum sgx_attribute {
  * @base:		base address of the  address space
  * @ssa_frame_size:	size of an SSA frame
  * @miscselect:		additional information stored to an SSA frame
+ * @cet_leg_bitmap:	page aligned offset of legacy code page bitmap from enclave base
+ * @cet_attributes:	CET feature attributes of the enclave
  * @attributes:		attributes for enclave
  * @xfrm:		XSave-Feature Request Mask (subset of XCR0)
  * @mrenclave:		SHA256-hash of the enclave contents
@@ -172,7 +175,9 @@ struct sgx_secs {
 	u64 base;
 	u32 ssa_frame_size;
 	u32 miscselect;
-	u8  reserved1[24];
+	u64 cet_leg_bitmap;
+	u8  cet_attributes;
+	u8  reserved1[15];
 	u64 attributes;
 	u64 xfrm;
 	u32 mrenclave[8];
@@ -197,7 +202,7 @@ enum sgx_tcs_flags {
 };
 
 #define SGX_TCS_RESERVED_MASK	GENMASK_ULL(63, 1)
-#define SGX_TCS_RESERVED_SIZE	4024
+#define SGX_TCS_RESERVED_SIZE	4008
 
 /**
  * struct sgx_tcs - Thread Control Structure (TCS)
@@ -215,6 +220,8 @@ enum sgx_tcs_flags {
  *			segment inside the enclave
  * @fs_limit:		size to become a new FS-limit (only 32-bit enclaves)
  * @gs_limit:		size to become a new GS-limit (only 32-bit enclaves)
+ * @ocetssa:		offset of CET state save area from enclave base
+ * @prevssp:		SSP at the time of AEX or EEXIT
  *
  * Thread Control Structure (TCS) is an enclave page visible in its address
  * space that defines an entry point inside the enclave. A thread enters inside
@@ -233,6 +240,8 @@ struct sgx_tcs {
 	u64 gs_offset;
 	u32 fs_limit;
 	u32 gs_limit;
+	u64 ocetssa;
+	u64 prevssp;
 	u8  reserved[SGX_TCS_RESERVED_SIZE];
 } __packed;
 
@@ -332,7 +341,7 @@ struct sgx_pcmd {
 } __packed __aligned(128);
 
 #define SGX_SIGSTRUCT_RESERVED1_SIZE 84
-#define SGX_SIGSTRUCT_RESERVED2_SIZE 20
+#define SGX_SIGSTRUCT_RESERVED2_SIZE 18
 #define SGX_SIGSTRUCT_RESERVED3_SIZE 32
 #define SGX_SIGSTRUCT_RESERVED4_SIZE 12
 
@@ -357,6 +366,8 @@ struct sgx_sigstruct_header {
  * struct sgx_sigstruct_body - defines contents of the enclave
  * @miscselect:		additional information stored to an SSA frame
  * @misc_mask:		required miscselect in SECS
+ * @cet_attributes:			CET attributes that must be set
+ * @cet_attributes_mask:	mask of CET attributes to enforce
  * @attributes:		attributes for enclave
  * @xfrm:		XSave-Feature Request Mask (subset of XCR0)
  * @attributes_mask:	required attributes in SECS
@@ -368,7 +379,9 @@ struct sgx_sigstruct_header {
 struct sgx_sigstruct_body {
 	u32 miscselect;
 	u32 misc_mask;
-	u8  reserved2[20];
+	u8  cet_attributes;
+	u8  cet_attributes_mask;
+	u8  reserved2[18];
 	u64 attributes;
 	u64 xfrm;
 	u64 attributes_mask;
