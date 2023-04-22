@@ -6,6 +6,7 @@
 #include <linux/mman.h>
 #include <linux/security.h>
 #include <linux/suspend.h>
+#include <asm/tlbflush.h>
 #include <asm/traps.h>
 #include "driver.h"
 #include "encl.h"
@@ -166,6 +167,11 @@ int __init sgx_drv_init(void)
 
 	attr_mask = (((u64)ebx) << 32) + (u64)eax;
 	sgx_attributes_reserved_mask = ~attr_mask | SGX_ATTR_RESERVED_MASK;
+
+	/* CR4.CET is set before SGX driver initialization, and stays unchanged
+	 * at runtime. */
+	if ( !(cr4_read_shadow() & X86_CR4_CET))
+		sgx_attributes_reserved_mask |= SGX_ATTR_CET;
 
 	if (cpu_feature_enabled(X86_FEATURE_OSXSAVE)) {
 		xfrm_mask = (((u64)edx) << 32) + (u64)ecx;
