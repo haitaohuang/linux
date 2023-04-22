@@ -81,6 +81,51 @@ static int sgx_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static int sgx_encl_should_map_shadow_stack(struct sgx_encl *encl,
+					    unsigned long start,
+					    unsigned long end)
+{
+	unsigned long vm_prot_bits = VM_WRITE | VM_READ;
+	struct sgx_encl_page *page;
+	unsigned long count = 0;
+	int ret = 1;
+
+	XA_STATE(xas, &encl->page_array, PFN_DOWN(start));
+
+	/* Disallow mapping outside enclave's address range. */
+	if ((start < encl->base || end > encl->base + encl->size))
+		return 0;
+
+	mutex_lock(&encl->lock);
+	xas_lock(&xas);
+	xas_for_each(&xas, page, PFN_DOWN(end - 1)) {
+		if (!(page->type == SGX_PAGE_TYPE_SS_FIRST ||
+		      page->type == SGX_PAGE_TYPE_SS_REST) ||
+		    (~page->vm_max_prot_bits & vm_prot_bits)) {
+			ret = 0;
+			break;
+		}
+		/* Reschedule on every XA_CHECK_SCHED iteration. */
+		if (!(++count % XA_CHECK_SCHED)) {
+			xas_pause(&xas);
+			xas_unlock(&xas);
+			mutex_unlock(&encl->lock);
+
+			cond_resched();
+
+			mutex_lock(&encl->lock);
+			xas_lock(&xas);
+		}
+	}
+	xas_unlock(&xas);
+	mutex_unlock(&encl->lock);
+
+	if (count == 0)
+		ret = 0;
+
+	return ret;
+}
+
 static int sgx_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct sgx_encl *encl = file->private_data;
@@ -89,6 +134,13 @@ static int sgx_mmap(struct file *file, struct vm_area_struct *vma)
 	ret = sgx_encl_may_map(encl, vma->vm_start, vma->vm_end, vma->vm_flags);
 	if (ret)
 		return ret;
+
+	if (sgx_encl_should_map_shadow_stack(encl, vma->vm_start, vma->vm_end)) {
+		vm_flags_set(vma, VM_SHADOW_STACK);
+	} else {
+		if (vma->vm_flags & VM_SHADOW_STACK)
+			return -EACCES;
+	}
 
 	ret = sgx_encl_mm_add(encl, vma->vm_mm);
 	if (ret)

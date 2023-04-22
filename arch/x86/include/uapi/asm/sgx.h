@@ -9,12 +9,16 @@
 #include <linux/ioctl.h>
 
 /**
- * enum sgx_page_flags - page control flags
- * %SGX_PAGE_MEASURE:	Measure the page contents with a sequence of
- *			ENCLS[EEXTEND] operations.
+ * enum sgx_page_flags - page control flags for EADD or EAUG
+ * %SGX_PAGE_MEASURE:		Measure the page contents with a sequence of
+ *				ENCLS[EEXTEND] operations.
+ * %SGX_PAGE_CET_SSA:		To be used as CET_SSA, PT_SS_REST in EPCM,
+ *					but accessed as regular RW in PTE,
+ *					i.e., no #PF with PFEC.SS=1
  */
 enum sgx_page_flags {
 	SGX_PAGE_MEASURE	= 0x01,
+	SGX_PAGE_CET_SSA	= 0x02,
 };
 
 #define SGX_MAGIC 0xA4

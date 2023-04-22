@@ -174,7 +174,8 @@ static int sgx_validate_secinfo(struct sgx_secinfo *secinfo)
 	u64 perm = secinfo->flags & SGX_SECINFO_PERMISSION_MASK;
 	u64 pt   = secinfo->flags & SGX_SECINFO_PAGE_TYPE_MASK;
 
-	if (pt != SGX_SECINFO_REG && pt != SGX_SECINFO_TCS)
+	if (pt != SGX_SECINFO_REG && pt != SGX_SECINFO_TCS &&
+	    pt != SGX_SECINFO_SS_FIRST && pt != SGX_SECINFO_SS_REST)
 		return -EINVAL;
 
 	if ((perm & SGX_SECINFO_W) && !(perm & SGX_SECINFO_R))
@@ -314,6 +315,9 @@ static int sgx_encl_add_page(struct sgx_encl *encl, unsigned long src,
 	encl_page->encl = encl;
 	encl_page->epc_page = epc_page;
 	encl_page->type = (secinfo->flags & SGX_SECINFO_PAGE_TYPE_MASK) >> 8;
+	if (flags & SGX_PAGE_CET_SSA)
+		encl_page->type |= SGX_PAGE_EXTRA_TYPE_CET_SSA;
+
 	encl->secs_child_cnt++;
 
 	if (flags & SGX_PAGE_MEASURE) {
@@ -429,6 +433,9 @@ static long sgx_ioc_enclave_add_pages(struct sgx_encl *encl, void __user *arg)
 		return -EFAULT;
 
 	if (sgx_validate_secinfo(&secinfo))
+		return -EINVAL;
+
+	if ((add_arg.flags & SGX_PAGE_CET_SSA) && !(secinfo.flags & SGX_SECINFO_SS_REST))
 		return -EINVAL;
 
 	for (c = 0 ; c < add_arg.length; c += PAGE_SIZE) {
