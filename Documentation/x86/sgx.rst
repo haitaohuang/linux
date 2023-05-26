@@ -100,6 +100,23 @@ pages and establish enclave page permissions.
                sgx_ioc_enclave_init
                sgx_ioc_enclave_provision
 
+Enclave memory mapping
+----------------------
+
+A file descriptor created from opening **/dev/sgx_enclave** represents an
+enclave object. The mmap() syscall with enclave file descriptors does not
+support non-zero value for the 'offset' parameter.
+
+Rational:
+
+Enclave mapping is very similar to anonymous mapping in that it maps physical
+EPC pages to virtual addresses and the physical pages need not be contiguous. And
+the content of each enclave page must be loaded at an expected offset relative
+to SECS.BASEADDR as is reflected in measurements in its SIGSTRUCT. Otherwise
+EINIT would fail to verify the measurements and initialize the enclave. This is
+unlike regular file mapping in that no content offset can be defined that is
+independent from the virtual address it is loaded to.
+
 Enclave runtime management
 --------------------------
 
