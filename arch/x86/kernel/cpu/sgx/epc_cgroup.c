@@ -11,7 +11,6 @@
 #include "epc_cgroup.h"
 
 #define SGX_EPC_RECLAIM_MIN_PAGES		16UL
-#define SGX_EPC_RECLAIM_MAX_PAGES		64UL
 #define SGX_EPC_RECLAIM_IGNORE_AGE_THRESHOLD	5
 #define SGX_EPC_RECLAIM_OOM_THRESHOLD		5
 
@@ -267,7 +266,7 @@ static int sgx_epc_cgroup_reclaim_pages(unsigned long nr_pages,
 	 * locks for an extended duration.  This also bounds nr_pages so
 	 */
 	nr_pages = max(nr_pages, SGX_EPC_RECLAIM_MIN_PAGES);
-	nr_pages = min(nr_pages, SGX_EPC_RECLAIM_MAX_PAGES);
+	nr_pages = min(nr_pages, SGX_NR_TO_SCAN_MAX);
 
 	return sgx_reclaim_epc_pages(nr_pages, rc->ignore_age, rc->epc_cg);
 }
@@ -332,7 +331,7 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 		 * blocked until a worker makes its way through the global work
 		 * queue.
 		 */
-		if (max > SGX_EPC_RECLAIM_MAX_PAGES)
+		if (max > SGX_NR_TO_SCAN_MAX)
 			max -= (SGX_EPC_RECLAIM_MIN_PAGES/2);
 
 		cur = sgx_epc_cgroup_page_counter_read(epc_cg);

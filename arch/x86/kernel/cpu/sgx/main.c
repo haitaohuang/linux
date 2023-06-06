@@ -20,11 +20,6 @@
 #include "encls.h"
 #include "epc_cgroup.h"
 
-/**
- * Maximum number of pages to scan for reclaiming.
- */
-#define SGX_NR_TO_SCAN_MAX	32
-
 struct sgx_epc_section sgx_epc_sections[SGX_MAX_EPC_SECTIONS];
 static int sgx_nr_epc_sections;
 static struct task_struct *ksgxd_tsk;
@@ -369,8 +364,8 @@ size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age,
 	struct sgx_epc_lru_lists *lru;
 	pgoff_t page_index;
 	LIST_HEAD(iso);
+	size_t i =0;
 	size_t ret;
-	size_t i;
 
         /*
          * If a specific cgroup is not being targetted, take from the global
