@@ -369,8 +369,8 @@ size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age,
 	struct sgx_epc_lru_lists *lru;
 	pgoff_t page_index;
 	LIST_HEAD(iso);
+	size_t i =0;
 	size_t ret;
-	size_t i;
 
         /*
          * If a specific cgroup is not being targetted, take from the global
