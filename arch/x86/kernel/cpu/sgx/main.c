@@ -39,8 +39,10 @@ static struct sgx_epc_lru_lists sgx_global_lru;
 
 static inline struct sgx_epc_lru_lists *sgx_lru_lists(struct sgx_epc_page *epc_page)
 {
-        if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
+        if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC)) {
+		BUG_ON(!epc_page->epc_cg);
 		return epc_cg_lru(epc_page->epc_cg);
+	}
 
 	return &sgx_global_lru;
 }
@@ -639,7 +641,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 	struct sgx_epc_page *page;
 	struct sgx_epc_cgroup *epc_cg;
 
-	epc_cg = sgx_epc_cgroup_try_charge(current->mm, reclaim);
+	epc_cg = sgx_epc_cgroup_try_charge(reclaim);
 	if (IS_ERR(epc_cg))
 		return ERR_CAST(epc_cg);
 
@@ -672,7 +674,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 	if (!IS_ERR(page)) {
 		WARN_ON(page->epc_cg);
 		page->epc_cg = epc_cg;
-	} else {
+	} else if (epc_cg) {
 		sgx_epc_cgroup_uncharge(epc_cg);
 	}
 

@@ -16,8 +16,7 @@
 #define MISC_CG_RES_SGX_EPC MISC_CG_RES_TYPES
 struct sgx_epc_cgroup;
 
-static inline struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(struct mm_struct *mm,
-							       bool reclaim)
+static inline struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(bool reclaim)
 {
 	return NULL;
 }
@@ -42,8 +41,7 @@ struct sgx_epc_cgroup {
 	unsigned int		epoch;
 };
 
-struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(struct mm_struct *mm,
-						 bool reclaim);
+struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(bool reclaim);
 void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg);
 bool sgx_epc_cgroup_lru_empty(struct sgx_epc_cgroup *root);
 void sgx_epc_cgroup_isolate_pages(struct sgx_epc_cgroup *root,
