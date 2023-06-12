@@ -100,6 +100,7 @@ int misc_cg_set_capacity(enum misc_res_type type, unsigned long capacity)
 		return -EINVAL;
 
 	WRITE_ONCE(misc_res_capacity[type], capacity);
+	WRITE_ONCE(root_cg.res[type].max, capacity);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(misc_cg_set_capacity);
