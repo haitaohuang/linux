@@ -353,20 +353,14 @@ static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 	unsigned long cur, max, over;
 	unsigned int nr_empty = 0;
 
-	if (epc_cg == sgx_epc_cgroup_from_misc_cg(misc_cg_root())) {
-		misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg,
-				   nr_pages * PAGE_SIZE);
-		return 0;
-	}
-
-	sgx_epc_reclaim_control_init(&rc, NULL);
+	BUG_ON(!epc_cg);
+	sgx_epc_reclaim_control_init(&rc, epc_cg);
 
 	for (;;) {
 		if (!misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg,
 					nr_pages * PAGE_SIZE))
 			break;
 
-		rc.epc_cg = epc_cg;
 		max = sgx_epc_cgroup_max_pages(rc.epc_cg);
 		max = min(max, misc_cg_capacity(MISC_CG_RES_SGX_EPC) / PAGE_SIZE);
 
@@ -393,8 +387,8 @@ static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 			}
 		}
 	}
-
-	css_get_many(&epc_cg->cg->css, nr_pages);
+	if (epc_cg->cg != misc_cg_root())
+		css_get_many(&epc_cg->cg->css, nr_pages);
 
 	return 0;
 }
