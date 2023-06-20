@@ -334,6 +334,7 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 		if (max > SGX_NR_TO_SCAN_MAX)
 			max -= (SGX_EPC_RECLAIM_MIN_PAGES/2);
 
+		max = min(max, misc_cg_capacity(MISC_CG_RES_SGX_EPC) / PAGE_SIZE);
 		cur = sgx_epc_cgroup_page_counter_read(epc_cg);
 		if (cur <= max)
 			break;
@@ -367,6 +368,8 @@ static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 
 		rc.epc_cg = epc_cg;
 		max = sgx_epc_cgroup_max_pages(rc.epc_cg);
+		max = min(max, misc_cg_capacity(MISC_CG_RES_SGX_EPC) / PAGE_SIZE);
+
 		if (nr_pages > max)
 			return -ENOMEM;
 
