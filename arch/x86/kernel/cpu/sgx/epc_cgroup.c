@@ -528,6 +528,8 @@ static int sgx_epc_cgroup_alloc(struct misc_cg *cg)
 
 static int __init sgx_epc_cgroup_init(void)
 {
+	struct misc_cg *cg;
+
 	if (!boot_cpu_has(X86_FEATURE_SGX))
 		return 0;
 
@@ -536,6 +538,10 @@ static int __init sgx_epc_cgroup_init(void)
 					WQ_UNBOUND_MAX_ACTIVE);
 	BUG_ON(!sgx_epc_cg_wq);
 
-	return sgx_epc_cgroup_alloc(misc_cg_root());
+	cg = misc_cg_root();
+	BUG_ON (!cg);
+	WRITE_ONCE(cg->res[MISC_CG_RES_SGX_EPC].max, ULONG_MAX);
+	atomic_long_set(&cg->res[MISC_CG_RES_SGX_EPC].usage, 0UL);
+	return sgx_epc_cgroup_alloc(cg);
 }
 subsys_initcall(sgx_epc_cgroup_init);
