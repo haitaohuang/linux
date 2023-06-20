@@ -425,11 +425,6 @@ skip:
 				     SGX_EPC_PAGE_ENCLAVE |
 				     SGX_EPC_PAGE_VERSION_ARRAY);
 
-		if (epc_page->epc_cg) {
-			sgx_epc_cgroup_uncharge(epc_page->epc_cg);
-			epc_page->epc_cg = NULL;
-		}
-
 		sgx_free_epc_page(epc_page);
 	}
 	return i;
@@ -691,6 +686,11 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	struct sgx_epc_section *section = &sgx_epc_sections[page->section];
 	struct sgx_numa_node *node = section->node;
 
+	if (page->epc_cg) {
+		sgx_epc_cgroup_uncharge(page->epc_cg);
+		page->epc_cg = NULL;
+	}
+
 	spin_lock(&node->lock);
 
 	page->encl_owner = NULL;
@@ -701,11 +701,6 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	page->flags = SGX_EPC_PAGE_IS_FREE;
 
 	spin_unlock(&node->lock);
-
-	if (page->epc_cg) {
-		sgx_epc_cgroup_uncharge(page->epc_cg);
-		page->epc_cg = NULL;
-	}
 
 	atomic_long_inc(&sgx_nr_free_pages);
 }
