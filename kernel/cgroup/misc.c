@@ -104,6 +104,23 @@ int misc_cg_set_capacity(enum misc_res_type type, unsigned long capacity)
 }
 EXPORT_SYMBOL_GPL(misc_cg_set_capacity);
 
+
+/**
+ * misc_cg_capacity() - Get the capacity of the misc cgroup res.
+ * @type: Type of the misc res.
+ *
+ * Context: Any context.
+ * Return: Capacity in bytes of a given type.
+ */
+unsigned long misc_cg_capacity(enum misc_res_type type)
+{
+        if (!valid_type(type))
+                return 0;
+
+        return READ_ONCE(misc_res_capacity[type]);
+}
+EXPORT_SYMBOL_GPL(misc_cg_capacity);
+
 /**
  * misc_cg_cancel_charge() - Cancel the charge from the misc cgroup.
  * @type: Misc res type in misc cg to cancel the charge from.

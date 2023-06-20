@@ -66,6 +66,7 @@ struct misc_cg {
 
 struct misc_cg *misc_cg_root(void);
 unsigned long misc_cg_res_total_usage(enum misc_res_type type);
+unsigned long misc_cg_capacity(enum misc_res_type type);
 int misc_cg_set_capacity(enum misc_res_type type, unsigned long capacity);
 int misc_cg_try_charge(enum misc_res_type type, struct misc_cg *cg,
 		       unsigned long amount);
