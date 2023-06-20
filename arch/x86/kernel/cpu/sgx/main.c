@@ -286,7 +286,7 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 			goto out;
 
 		sgx_encl_ewb(encl->secs.epc_page, &secs_backing);
-		sgx_drop_epc_page(encl->secs.epc_page);
+		WARN_ON(sgx_drop_epc_page(encl->secs.epc_page));
 		sgx_encl_free_epc_page(encl->secs.epc_page);
 		encl->secs.epc_page = NULL;
 

@@ -717,7 +717,7 @@ static void __sgx_encl_release(struct sgx_encl *encl)
 	xa_destroy(&encl->page_array);
 
 	if (!encl->secs_child_cnt && encl->secs.epc_page) {
-		sgx_drop_epc_page(encl->secs.epc_page);
+		WARN_ON(sgx_drop_epc_page(encl->secs.epc_page));
 		sgx_encl_free_epc_page(encl->secs.epc_page);
 		encl->secs.epc_page = NULL;
 	}
@@ -726,7 +726,7 @@ static void __sgx_encl_release(struct sgx_encl *encl)
 		va_page = list_first_entry(&encl->va_pages, struct sgx_va_page,
 					   list);
 		list_del_init(&va_page->list);
-		sgx_drop_epc_page(va_page->epc_page);
+		WARN_ON(sgx_drop_epc_page(va_page->epc_page));
 		sgx_encl_free_epc_page(va_page->epc_page);
 		kfree(va_page);
 	}
