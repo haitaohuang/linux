@@ -249,6 +249,7 @@ static struct sgx_encl_page *__sgx_encl_load_page(struct sgx_encl *encl,
 	}
 
 	if (!(encl->secs.epc_page)) {
+		WARN_ON_ONCE(1);
 		epc_page = sgx_encl_eldu(&encl->secs, NULL);
 		if (IS_ERR(epc_page))
 			return ERR_CAST(epc_page);

@@ -260,8 +260,6 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 {
 	struct sgx_encl_page *encl_page = epc_page->encl_owner;
 	struct sgx_encl *encl = encl_page->encl;
-	struct sgx_backing secs_backing;
-	int ret;
 
 	mutex_lock(&encl->lock);
 
@@ -270,21 +268,6 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 	encl->secs_child_cnt--;
 	sgx_encl_put_backing(backing);
 
-	if (!encl->secs_child_cnt && test_bit(SGX_ENCL_INITIALIZED, &encl->flags)) {
-		ret = sgx_encl_alloc_backing(encl, PFN_DOWN(encl->size),
-					   &secs_backing);
-		if (ret)
-			goto out;
-
-		sgx_encl_ewb(encl->secs.epc_page, &secs_backing);
-		sgx_drop_epc_page(encl->secs.epc_page);
-		sgx_encl_free_epc_page(encl->secs.epc_page);
-		encl->secs.epc_page = NULL;
-
-		sgx_encl_put_backing(&secs_backing);
-	}
-
-out:
 	mutex_unlock(&encl->lock);
 }
 
