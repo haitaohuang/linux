@@ -249,6 +249,7 @@ static struct sgx_encl_page *__sgx_encl_load_page(struct sgx_encl *encl,
 	}
 
 	if (!(encl->secs.epc_page)) {
+		WARN_ON_ONCE(1);
 		epc_page = sgx_encl_eldu(&encl->secs, NULL);
 		if (IS_ERR(epc_page))
 			return ERR_CAST(epc_page);
@@ -686,6 +687,11 @@ static void __sgx_encl_release(struct sgx_encl *encl)
 	xas_lock(&xas);
 	xas_for_each(&xas, entry, max_page_index) {
 		if (entry->epc_page) {
+			/*
+			 * Remove SECS page only after all other pages removed
+			 */
+			if (entry->type == SGX_PAGE_TYPE_SECS)
+				continue;
 			/*
 			 * The page and its radix tree entry cannot be freed
 			 * if the page is being held by the reclaimer.
