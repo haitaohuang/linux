@@ -39,7 +39,7 @@ struct sgx_epc_cgroup {
 	struct sgx_epc_lru_lists	lru;
 	struct sgx_epc_cgroup	*reclaim_iter;
 	struct work_struct	reclaim_work;
-	unsigned int		epoch;
+	atomic_long_t		epoch;
 };
 
 struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(struct mm_struct *mm,

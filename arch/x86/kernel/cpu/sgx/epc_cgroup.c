@@ -70,6 +70,7 @@ static struct sgx_epc_cgroup *sgx_epc_cgroup_iter(struct sgx_epc_cgroup *prev,
 	struct cgroup_subsys_state *css = NULL;
 	struct sgx_epc_cgroup *epc_cg = NULL;
 	struct sgx_epc_cgroup *pos = NULL;
+	unsigned long new_epoch;
 	bool inc_epoch = false;
 
 	if (sgx_epc_cgroup_disabled())
@@ -85,12 +86,14 @@ static struct sgx_epc_cgroup *sgx_epc_cgroup_iter(struct sgx_epc_cgroup *prev,
 
 start:
 	if (reclaim_epoch) {
+		if (!prev)
+			*reclaim_epoch = atomic_long_read(&root->epoch);
 		/*
 		 * Abort the walk if a reclaimer working from the same root has
 		 * started a new walk after this reclaimer has already scanned
 		 * at least one cgroup.
 		 */
-		if (prev && *reclaim_epoch != root->epoch)
+		if (prev && *reclaim_epoch != atomic_long_read(&root->epoch))
 			goto out;
 
 		while (1) {
@@ -161,25 +164,35 @@ start:
 		 * new call.
 		 */
 		if (cmpxchg(&root->reclaim_iter, pos, epc_cg) != pos) {
-			if (epc_cg && epc_cg != root)
-				put_misc_cg(epc_cg->cg);
-			if (pos)
-				put_misc_cg(pos->cg);
-			css = NULL;
-			epc_cg = NULL;
-			inc_epoch = false;
-			goto start;
+			goto restart;
 		}
 
-		if (inc_epoch)
-			root->epoch++;
-		if (!prev)
-			*reclaim_epoch = root->epoch;
+		if (inc_epoch) {
+		/*
+		 * It's possible two threads start at same time, both got the same
+		 * 'pos'. Ensure only one can update epoch.
+		 */
+			new_epoch = *reclaim_epoch + 1;
+			if (atomic_long_cmpxchg(&root->epoch, *reclaim_epoch, new_epoch)
+			    != *reclaim_epoch) {
+				goto restart;
+			}
+		}
 
 		if (pos)
 			put_misc_cg(pos->cg);
 	}
+	goto out;
 
+restart:
+		if (epc_cg && epc_cg != root)
+			put_misc_cg(epc_cg->cg);
+		if (pos)
+			put_misc_cg(pos->cg);
+		css = NULL;
+		epc_cg = NULL;
+		inc_epoch = false;
+		goto start;
 out:
 	rcu_read_unlock();
 	if (prev && prev != root)
