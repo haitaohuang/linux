@@ -35,7 +35,7 @@ static struct sgx_epc_lru_lists sgx_global_lru;
 static inline struct sgx_epc_lru_lists *sgx_lru_lists(struct sgx_epc_page *epc_page)
 {
         if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
-		return epc_cg_lru(epc_page->epc_cg);
+		return epc_cg_lru(READ_ONCE(epc_page->epc_cg));
 
 	return &sgx_global_lru;
 }
@@ -643,8 +643,8 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 	}
 
 	if (!IS_ERR(page)) {
-		WARN_ON(page->epc_cg);
-		page->epc_cg = epc_cg;
+		WARN_ON(READ_ONCE(page->epc_cg));
+		WRITE_ONCE(page->epc_cg, epc_cg);
 	} else {
 		sgx_epc_cgroup_uncharge(epc_cg);
 	}
@@ -669,9 +669,9 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	struct sgx_epc_section *section = &sgx_epc_sections[page->section];
 	struct sgx_numa_node *node = section->node;
 
-	if (page->epc_cg) {
+	if (READ_ONCE(page->epc_cg)) {
 		sgx_epc_cgroup_uncharge(page->epc_cg);
-		page->epc_cg = NULL;
+		WRITE_ONCE(page->epc_cg, NULL);
 	}
 
 	spin_lock(&node->lock);
