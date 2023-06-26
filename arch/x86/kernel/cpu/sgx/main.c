@@ -386,6 +386,7 @@ size_t sgx_reclaim_epc_pages(size_t nr_to_scan, bool ignore_age,
 
 skip:
 		lru = sgx_lru_lists(epc_page);
+		BUG_ON (!lru);
 		spin_lock(&lru->lock);
 		epc_page->flags &= ~SGX_EPC_PAGE_RECLAIM_IN_PROGRESS;
 		list_move_tail(&epc_page->list, &lru->reclaimable);
@@ -496,6 +497,8 @@ static struct sgx_epc_page *__sgx_alloc_epc_page_from_node(int nid)
 
 	spin_unlock(&node->lock);
 	atomic_long_dec(&sgx_nr_free_pages);
+	pr_debug("Number of free EPC pages = %lu after alloc from node #%d\n",
+		 atomic_long_read(&sgx_nr_free_pages), nid);
 
 	return page;
 }
@@ -533,6 +536,8 @@ struct sgx_epc_page *__sgx_alloc_epc_page(void)
 			return page;
 	}
 
+	pr_debug("EPC OOM, Number of free EPC pages = %lu\n",
+		 atomic_long_read(&sgx_nr_free_pages));
 	return ERR_PTR(-ENOMEM);
 }
 
@@ -548,6 +553,7 @@ void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 {
 	struct sgx_epc_lru_lists *lru = sgx_lru_lists(page);
 
+	BUG_ON(!lru);
 	spin_lock(&lru->lock);
 	WARN_ON(page->flags & (SGX_EPC_PAGE_RECLAIMER_TRACKED |
 			       SGX_EPC_PAGE_RECLAIM_IN_PROGRESS));
@@ -573,6 +579,7 @@ int sgx_drop_epc_page(struct sgx_epc_page *page)
 {
 	struct sgx_epc_lru_lists *lru = sgx_lru_lists(page);
 
+	BUG_ON(!lru);
 	spin_lock(&lru->lock);
 	if ((page->flags & SGX_EPC_PAGE_RECLAIMER_TRACKED) &&
 	    (page->flags & SGX_EPC_PAGE_RECLAIM_IN_PROGRESS)) {
@@ -677,8 +684,10 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	spin_lock(&node->lock);
 
 	page->encl_owner = NULL;
-	if (page->poison)
+	if (page->poison) {
+		WARN_ON(1);
 		list_add(&page->list, &node->sgx_poison_page_list);
+	}
 	else
 		list_add_tail(&page->list, &node->free_page_list);
 	page->flags = SGX_EPC_PAGE_IS_FREE;
@@ -686,6 +695,8 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	spin_unlock(&node->lock);
 
 	atomic_long_inc(&sgx_nr_free_pages);
+	pr_debug("Number of free EPC pages = %lu after a free\n",
+		 atomic_long_read(&sgx_nr_free_pages));
 }
 
 static bool sgx_oom_get_ref(struct sgx_epc_page *epc_page)
@@ -799,6 +810,7 @@ bool sgx_epc_oom(struct sgx_epc_lru_lists *lru)
 {
 	struct sgx_epc_page *victim;
 
+	BUG_ON(!lru);
 	spin_lock(&lru->lock);
 	victim = sgx_oom_get_victim(lru);
 	spin_unlock(&lru->lock);
