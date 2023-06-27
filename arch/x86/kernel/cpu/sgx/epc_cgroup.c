@@ -32,6 +32,18 @@ static inline unsigned long sgx_epc_cgroup_max_pages(struct sgx_epc_cgroup *epc_
 	 return READ_ONCE(epc_cg->cg->res[MISC_CG_RES_SGX_EPC].max) / PAGE_SIZE;
 }
 
+static inline unsigned long sgx_epc_cgroup_max_pages_to_root(struct sgx_epc_cgroup *epc_cg)
+{
+	struct misc_cg *i = epc_cg->cg;
+	unsigned long m = ULONG_MAX;
+
+	while (i) {
+		m = min(m, READ_ONCE(i->res[MISC_CG_RES_SGX_EPC].max));
+		i = misc_cg_parent(i);
+	}
+	return m / PAGE_SIZE;
+}
+
 static inline struct sgx_epc_cgroup *sgx_epc_cgroup_from_misc_cg(struct misc_cg *cg)
 {
 	if (cg)
@@ -320,8 +332,9 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 	sgx_epc_reclaim_control_init(&rc, epc_cg);
 
 	for (;;) {
-		max = sgx_epc_cgroup_max_pages(epc_cg);
+		max = sgx_epc_cgroup_max_pages_to_root(epc_cg);
 
+		pr_debug("max from misc_cg: %lu\n", max);
 		/*
 		 * Adjust the limit down by one page, the goal is to free up
 		 * pages for fault allocations, not to simply obey the limit.
@@ -374,7 +387,7 @@ static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 					nr_pages * PAGE_SIZE))
 			break;
 
-		max = sgx_epc_cgroup_max_pages(rc.epc_cg);
+		max = sgx_epc_cgroup_max_pages_to_root(rc.epc_cg);
 		max = min(max, misc_cg_capacity(MISC_CG_RES_SGX_EPC) / PAGE_SIZE);
 
 		if (nr_pages > max)
