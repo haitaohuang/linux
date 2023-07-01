@@ -113,37 +113,6 @@ static inline void sgx_lru_init(struct sgx_epc_lru_lists *lrus)
 	INIT_LIST_HEAD(&lrus->unreclaimable);
 }
 
-/*
- * Must be called with queue lock acquired
- */
-static inline void sgx_lru_push(struct list_head *list, struct sgx_epc_page *page)
-{
-	list_add_tail(&page->list, list);
-}
-
-/*
- * Must be called with queue lock acquired
- */
-static inline struct sgx_epc_page * sgx_lru_pop(struct list_head *list)
-{
-	struct sgx_epc_page *epc_page;
-
-	if (list_empty(list))
-		return NULL;
-
-	epc_page = list_first_entry(list, struct sgx_epc_page, list);
-	list_del_init(&epc_page->list);
-	return epc_page;
-}
-
-/*
- * Must be called with queue lock acquired
- */
-static inline struct sgx_epc_page * sgx_lru_peek(struct list_head *list)
-{
-	return list_first_entry_or_null(list, struct sgx_epc_page, list);
-}
-
 struct sgx_epc_page *__sgx_alloc_epc_page(void);
 void sgx_free_epc_page(struct sgx_epc_page *page);
 

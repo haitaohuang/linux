@@ -288,7 +288,7 @@ void sgx_isolate_epc_pages(struct sgx_epc_lru_lists *lru, size_t nr_to_scan,
 		if (list_empty(&lru->reclaimable))
 			break;
 
-		epc_page = sgx_lru_peek(&lru->reclaimable);
+		epc_page = list_first_entry_or_null(&lru->reclaimable, struct sgx_epc_page, list);
 		if (!epc_page)
 			break;
 
@@ -539,9 +539,9 @@ void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 			       SGX_EPC_PAGE_RECLAIM_IN_PROGRESS));
 	page->flags |= flags;
 	if (flags & SGX_EPC_PAGE_RECLAIMER_TRACKED)
-		sgx_lru_push(&lru->reclaimable, page);
+		list_add_tail(&page->list, &lru->reclaimable);
 	else
-		sgx_lru_push(&lru->unreclaimable, page);
+		list_add_tail(&page->list, &lru->unreclaimable);
 	spin_unlock(&lru->lock);
 }
 
