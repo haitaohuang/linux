@@ -265,6 +265,10 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 
 	mutex_lock(&encl->lock);
 
+	/* Should not be possible */
+	if (WARN_ON(!(encl->secs.epc_page)))
+		goto out;
+
 	sgx_encl_ewb(epc_page, backing);
 	encl_page->epc_page = NULL;
 	encl->secs_child_cnt--;
