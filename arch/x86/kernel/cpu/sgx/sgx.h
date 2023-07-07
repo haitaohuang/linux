@@ -23,11 +23,36 @@
 #define SGX_NR_LOW_PAGES		32
 #define SGX_NR_HIGH_PAGES		64
 
-/* Pages, which are being tracked by the page reclaimer. */
-#define SGX_EPC_PAGE_RECLAIMER_TRACKED	BIT(0)
+enum sgx_epc_page_state {
+	/* Not tracked by the reclaimer:
+	 * Pages allocated for virtual EPC which are never tracked by the host
+	 * reclaimer; pages just allocated from free list but not yet put in
+	 * use; pages just reclaimed, but not yet returned to the free list.
+	 * Becomes FREE after sgx_free_epc()
+	 * Becomes RECLAIMABLE or UNRECLAIMABLE after sgx_record_epc()
+	 */
+	SGX_EPC_PAGE_NOT_TRACKED = 0,
 
-/* Pages on free list */
-#define SGX_EPC_PAGE_IS_FREE		BIT(1)
+	/* Page is in the free list, ready for allocation
+	 * Becomes NOT_TRACKED after sgx_alloc_epc_page()
+	 */
+	SGX_EPC_PAGE_FREE = 1,
+
+	/* Page is in use and tracked in a reclaimable LRU list
+	 * Becomes NOT_TRACKED after sgx_drop_epc()
+	 */
+	SGX_EPC_PAGE_RECLAIMABLE = 2,
+
+	/* Page is in use but tracked in an unreclaimable LRU list. These are
+	 * only reclaimable when the whole enclave is OOM killed or the enclave
+	 * is released, e.g., VA, SECS pages
+	 * Becomes NOT_TRACKED after sgx_drop_epc()
+	 */
+	SGX_EPC_PAGE_UNRECLAIMABLE = 3,
+
+};
+
+#define SGX_EPC_PAGE_STATE_MASK GENMASK(2, 0)
 
 struct sgx_epc_page {
 	unsigned int section;
@@ -36,6 +61,22 @@ struct sgx_epc_page {
 	struct sgx_encl_page *owner;
 	struct list_head list;
 };
+
+static inline void sgx_epc_page_reset_state(struct sgx_epc_page *page)
+{
+	page->flags &= ~SGX_EPC_PAGE_STATE_MASK;
+}
+
+static inline void sgx_epc_page_set_state(struct sgx_epc_page *page, unsigned long flags)
+{
+	page->flags &= ~SGX_EPC_PAGE_STATE_MASK;
+	page->flags |= (flags & SGX_EPC_PAGE_STATE_MASK);
+}
+
+static inline bool sgx_epc_page_reclaimable(unsigned long flags)
+{
+	return SGX_EPC_PAGE_RECLAIMABLE == (flags & SGX_EPC_PAGE_STATE_MASK);
+}
 
 /*
  * Contains the tracking data for NUMA nodes having EPC pages. Most importantly,
