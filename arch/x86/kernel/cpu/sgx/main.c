@@ -512,7 +512,7 @@ struct sgx_epc_page *__sgx_alloc_epc_page(void)
 void sgx_record_epc_page(struct sgx_epc_page *page, unsigned long flags)
 {
 	spin_lock(&sgx_global_lru.lock);
-	WARN_ON(sgx_epc_page_reclaimable(page->flags));
+	WARN_ON_ONCE(sgx_epc_page_reclaimable(page->flags));
 	page->flags |= flags;
 	if (sgx_epc_page_reclaimable(flags))
 		list_add_tail(&page->list, &sgx_global_lru.reclaimable);
@@ -614,7 +614,7 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	struct sgx_epc_section *section = &sgx_epc_sections[page->section];
 	struct sgx_numa_node *node = section->node;
 
-	WARN_ON(page->flags & (SGX_EPC_PAGE_STATE_MASK));
+	WARN_ON_ONCE(page->flags & (SGX_EPC_PAGE_STATE_MASK));
 
 	spin_lock(&node->lock);
 
