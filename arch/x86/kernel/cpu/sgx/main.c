@@ -737,7 +737,7 @@ static void sgx_epc_oom_zap(void *owner, struct mm_struct *mm, unsigned long sta
 	for_each_vma_range(vmi, vma, end) {
 		if (vma->vm_ops == ops && vma->vm_private_data == owner &&
 		    vma->vm_start < end) {
-			zap_vma_pages(vma);
+			zap_vma_ptes(vma, vma->vm_start, vma->vm_end - vma->vm_start);
 		}
 	}
 }

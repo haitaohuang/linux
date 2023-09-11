@@ -7,39 +7,7 @@ if ! lscgroup | grep -q "test/test1/test3$"; then
   ./setup_epc_cg.sh
 fi
 
-cmd='./test_sgx'
-default_test="augment_via_eaccept_long"
-
-# We use 'tail' to skip header lines and 'sed' to remove 'enclave' from the first non-header line.
-list=$($cmd -l 2>&1 | tail -n +4 | sed '0,/^enclave/ s/^enclave//' | sed 's/^ *//')
-
-IFS=$'\n' read -d '' -r -a lines <<< "$list"
-lines=("all" "${lines[@]}")
-
-echo "Available tests:"
-for i in "${!lines[@]}"; do
-  # Check if the current line is the default test
-  if [[ ${lines[$i]} == *"$default_test"* ]]; then
-    echo "$((i)). ${lines[$i]} (default)"
-  else
-    echo "$((i)). ${lines[$i]}"
-  fi
-done
-
-echo "Please enter the number of the test you want to run (or press enter for the default test):"
-read choice
-
-if [ -z "$choice" ]; then
-  testname="$default_test"
-else
-  testname="${lines[$choice]}"
-fi
-
-if [ "$testname" == "all" ]; then
-  test_cmd="$cmd"
-else
-  test_cmd="$cmd -t $testname"
-fi
+test_cmd='./test_sgx'
 
 timestamp=$(date +%Y%m%d_%H%M%S)
 
