@@ -33,7 +33,9 @@ static inline void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg) { }
 static inline void sgx_epc_cgroup_init(void) { }
 #else
 struct sgx_epc_cgroup {
-	struct misc_cg *cg;
+	struct misc_cg			*cg;
+	struct sgx_epc_lru_list		lru;
+	struct work_struct		reclaim_work;
 };
 
 static inline struct sgx_epc_cgroup *sgx_epc_cgroup_from_misc_cg(struct misc_cg *cg)
@@ -66,6 +68,7 @@ static inline void sgx_put_epc_cg(struct sgx_epc_cgroup *epc_cg)
 
 int sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg);
 void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg);
+bool sgx_epc_cgroup_lru_empty(struct misc_cg *root);
 void sgx_epc_cgroup_init(void);
 
 #endif
