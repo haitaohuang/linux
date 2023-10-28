@@ -5,6 +5,36 @@
 #include <linux/kernel.h>
 #include "epc_cgroup.h"
 
+#define SGX_EPC_RECLAIM_MIN_PAGES		16U
+
+static struct workqueue_struct *sgx_epc_cg_wq;
+
+static inline u64 sgx_epc_cgroup_page_counter_read(struct sgx_epc_cgroup *epc_cg)
+{
+	return atomic64_read(&epc_cg->cg->res[MISC_CG_RES_SGX_EPC].usage) / PAGE_SIZE;
+}
+
+static inline u64 sgx_epc_cgroup_max_pages(struct sgx_epc_cgroup *epc_cg)
+{
+	return READ_ONCE(epc_cg->cg->res[MISC_CG_RES_SGX_EPC].max) / PAGE_SIZE;
+}
+
+/*
+ * Get the lower bound of limits of a cgroup and its ancestors.
+ */
+static inline u64 sgx_epc_cgroup_max_pages_to_root(struct sgx_epc_cgroup *epc_cg)
+{
+	struct misc_cg *i = epc_cg->cg;
+	u64 m = U64_MAX;
+
+	while (i) {
+		m = min(m, READ_ONCE(i->res[MISC_CG_RES_SGX_EPC].max));
+		i = misc_cg_parent(i);
+	}
+
+	return m / PAGE_SIZE;
+}
+
 static inline struct sgx_epc_cgroup *sgx_epc_cgroup_from_misc_cg(struct misc_cg *cg)
 {
 	return (struct sgx_epc_cgroup *)(cg->res[MISC_CG_RES_SGX_EPC].priv);
@@ -60,21 +90,144 @@ bool sgx_epc_cgroup_lru_empty(struct misc_cg *root)
 	return ret;
 }
 
-static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg)
+/**
+ * sgx_epc_cgroup_isolate_pages() - walk a cgroup tree and separate pages
+ * @root:	root of the tree to start walking
+ * @nr_to_scan: The number of pages that need to be isolated
+ * @dst:	Destination list to hold the isolated pages
+ *
+ * Walk the cgroup tree and isolate the pages in the hierarchy for reclaiming.
+ */
+void sgx_epc_cgroup_isolate_pages(struct misc_cg *root,
+				  unsigned int nr_to_scan, struct list_head *dst)
 {
-	if (!misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg,
-				PAGE_SIZE))
-		return -ENOMEM;
+	struct cgroup_subsys_state *css_root;
+	struct cgroup_subsys_state *pos;
+	struct sgx_epc_cgroup *epc_cg;
+
+	if (!nr_to_scan)
+		return;
+
+	 /* Caller ensure css_root ref acquired */
+	css_root = &root->css;
+
+	rcu_read_lock();
+	css_for_each_descendant_pre(pos, css_root) {
+		if (!css_tryget(pos))
+			break;
+		rcu_read_unlock();
+
+		epc_cg = sgx_epc_cgroup_from_misc_cg(css_misc(pos));
+		nr_to_scan = sgx_isolate_epc_pages(&epc_cg->lru, nr_to_scan, dst);
+
+		rcu_read_lock();
+		css_put(pos);
+		if (!nr_to_scan)
+			break;
+	}
+
+	rcu_read_unlock();
+}
+
+static unsigned int sgx_epc_cgroup_reclaim_pages(unsigned int nr_pages,
+						 struct misc_cg *root)
+{
+	LIST_HEAD(iso);
+	/*
+	 * Attempting to reclaim only a few pages will often fail and is inefficient, while
+	 * reclaiming a huge number of pages can result in soft lockups due to holding various
+	 * locks for an extended duration.
+	 */
+	nr_pages = max(nr_pages, SGX_EPC_RECLAIM_MIN_PAGES);
+	nr_pages = min(nr_pages, SGX_NR_TO_SCAN_MAX);
+	sgx_epc_cgroup_isolate_pages(root, nr_pages, &iso);
+
+	return sgx_do_epc_reclamation(&iso);
+}
+
+/*
+ * Scheduled by sgx_epc_cgroup_try_charge() to reclaim pages from the cgroup when the cgroup is
+ * at/near its maximum capacity
+ */
+static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
+{
+	struct sgx_epc_cgroup *epc_cg;
+	u64 cur, max;
+
+	epc_cg = container_of(work, struct sgx_epc_cgroup, reclaim_work);
+
+	for (;;) {
+		max = sgx_epc_cgroup_max_pages_to_root(epc_cg);
+
+		/*
+		 * Adjust the limit down by one page, the goal is to free up
+		 * pages for fault allocations, not to simply obey the limit.
+		 * Conditionally decrementing max also means the cur vs. max
+		 * check will correctly handle the case where both are zero.
+		 */
+		if (max)
+			max--;
+
+		/*
+		 * Unless the limit is extremely low, in which case forcing
+		 * reclaim will likely cause thrashing, force the cgroup to
+		 * reclaim at least once if it's operating *near* its maximum
+		 * limit by adjusting @max down by half the min reclaim size.
+		 * This work func is scheduled by sgx_epc_cgroup_try_charge
+		 * when it cannot directly reclaim due to being in an atomic
+		 * context, e.g. EPC allocation in a fault handler.  Waiting
+		 * to reclaim until the cgroup is actually at its limit is less
+		 * performant as it means the faulting task is effectively
+		 * blocked until a worker makes its way through the global work
+		 * queue.
+		 */
+		if (max > SGX_NR_TO_SCAN_MAX)
+			max -= (SGX_EPC_RECLAIM_MIN_PAGES / 2);
+
+		cur = sgx_epc_cgroup_page_counter_read(epc_cg);
+
+		if (cur <= max || sgx_epc_cgroup_lru_empty(epc_cg->cg))
+			break;
+
+		/* Keep reclaiming until above condition is met. */
+		sgx_epc_cgroup_reclaim_pages((unsigned int)(cur - max), epc_cg->cg);
+	}
+}
+
+static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
+				       bool reclaim)
+{
+	for (;;) {
+		if (!misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg,
+					PAGE_SIZE))
+			break;
+
+		if (sgx_epc_cgroup_lru_empty(epc_cg->cg))
+			return -ENOMEM;
+
+		if (signal_pending(current))
+			return -ERESTARTSYS;
+
+		if (!reclaim) {
+			queue_work(sgx_epc_cg_wq, &epc_cg->reclaim_work);
+			return -EBUSY;
+		}
+
+		if (!sgx_epc_cgroup_reclaim_pages(1, epc_cg->cg))
+			/* All pages were too young to reclaim, try again */
+			schedule();
+	}
 
 	return 0;
 }
 
 /**
  * sgx_epc_cgroup_try_charge() - hierarchically try to charge a single EPC page
+ * @reclaim:		whether or not synchronous reclaim is allowed
  *
  * Returns EPC cgroup or NULL on success, -errno on failure.
  */
-struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(void)
+struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(bool reclaim)
 {
 	struct sgx_epc_cgroup *epc_cg;
 	int ret;
@@ -83,7 +236,7 @@ struct sgx_epc_cgroup *sgx_epc_cgroup_try_charge(void)
 		return NULL;
 
 	epc_cg = sgx_epc_cgroup_from_misc_cg(get_current_misc_cg());
-	ret = __sgx_epc_cgroup_try_charge(epc_cg);
+	ret = __sgx_epc_cgroup_try_charge(epc_cg, reclaim);
 
 	if (ret) {
 		/* No epc_cg returned, release ref from get_current_misc_cg() */
@@ -118,6 +271,7 @@ static void sgx_epc_cgroup_free(struct misc_cg *cg)
 	if (!epc_cg)
 		return;
 
+	cancel_work_sync(&epc_cg->reclaim_work);
 	kfree(epc_cg);
 }
 
@@ -137,6 +291,7 @@ static int sgx_epc_cgroup_alloc(struct misc_cg *cg)
 		return -ENOMEM;
 
 	sgx_lru_init(&epc_cg->lru);
+	INIT_WORK(&epc_cg->reclaim_work, sgx_epc_cgroup_reclaim_work_func);
 	cg->res[MISC_CG_RES_SGX_EPC].misc_ops = &sgx_epc_cgroup_ops;
 	cg->res[MISC_CG_RES_SGX_EPC].priv = epc_cg;
 	epc_cg->cg = cg;
@@ -149,6 +304,11 @@ static int __init sgx_epc_cgroup_init(void)
 
 	if (!boot_cpu_has(X86_FEATURE_SGX))
 		return 0;
+
+	sgx_epc_cg_wq = alloc_workqueue("sgx_epc_cg_wq",
+					WQ_UNBOUND | WQ_FREEZABLE,
+					WQ_UNBOUND_MAX_ACTIVE);
+	BUG_ON(!sgx_epc_cg_wq);
 
 	cg = misc_cg_root();
 	BUG_ON(!cg);
