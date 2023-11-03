@@ -93,9 +93,10 @@ bool sgx_epc_cgroup_lru_empty(struct misc_cg *root)
 /**
  * sgx_epc_cgroup_reclaim_pages() - walk a cgroup tree and scan LRUs to reclaim pages
  * @root:	Root of the tree to start walking from.
+ * @indirect:   In ksgxd or EPC cgroup work queue context.
  * Return:	Number of pages reclaimed.
  */
-unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root)
+static unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root, bool indirect)
 {
 	/*
 	 * Attempting to reclaim only a few pages will often fail and is
@@ -119,7 +120,7 @@ unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root)
 		rcu_read_unlock();
 
 		epc_cg = sgx_epc_cgroup_from_misc_cg(css_misc(pos));
-		cnt += sgx_reclaim_pages(&epc_cg->lru, &nr_to_scan);
+		cnt += sgx_reclaim_pages(&epc_cg->lru, &nr_to_scan, indirect);
 
 		rcu_read_lock();
 		css_put(pos);
@@ -176,7 +177,7 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 			break;
 
 		/* Keep reclaiming until above condition is met. */
-		sgx_epc_cgroup_reclaim_pages(epc_cg->cg);
+		sgx_epc_cgroup_reclaim_pages(epc_cg->cg, true);
 	}
 }
 

@@ -993,23 +993,13 @@ static int __sgx_encl_get_backing(struct sgx_encl *encl, unsigned long page_inde
 }
 
 /*
- * When called from ksgxd, returns the mem_cgroup of a struct mm stored
- * in the enclave's mm_list. When not called from ksgxd, just returns
- * the mem_cgroup of the current task.
+ * Returns the mem_cgroup of a struct mm stored in the enclave's mm_list.
  */
 static struct mem_cgroup *sgx_encl_get_mem_cgroup(struct sgx_encl *encl)
 {
 	struct mem_cgroup *memcg = NULL;
 	struct sgx_encl_mm *encl_mm;
 	int idx;
-
-	/*
-	 * If called from normal task context, return the mem_cgroup
-	 * of the current task's mm. The remainder of the handling is for
-	 * ksgxd.
-	 */
-	if (!current_is_ksgxd())
-		return get_mem_cgroup_from_mm(current->mm);
 
 	/*
 	 * Search the enclave's mm_list to find an mm associated with
@@ -1047,27 +1037,33 @@ static struct mem_cgroup *sgx_encl_get_mem_cgroup(struct sgx_encl *encl)
  * @encl:	an enclave pointer
  * @page_index:	enclave page index
  * @backing:	data for accessing backing storage for the page
+ * @indirect:	in ksgxd or EPC cgroup work queue context
  *
- * When called from ksgxd, sets the active memcg from one of the
- * mms in the enclave's mm_list prior to any backing page allocation,
- * in order to ensure that shmem page allocations are charged to the
- * enclave.  Create a backing page for loading data back into an EPC page with
- * ELDU.  This function takes a reference on a new backing page which
- * must be dropped with a corresponding call to sgx_encl_put_backing().
+ * Create a backing page for loading data back into an EPC page with ELDU. This
+ * function takes a reference on a new backing page which must be dropped with a
+ * corresponding call to sgx_encl_put_backing().
+ *
+ * When @indirect is true, sets the active memcg from one of the mms in the
+ * enclave's mm_list prior to any backing page allocation, in order to ensure
+ * that shmem page allocations are charged to the enclave.
  *
  * Return:
  *   0 on success,
  *   -errno otherwise.
  */
 int sgx_encl_alloc_backing(struct sgx_encl *encl, unsigned long page_index,
-			   struct sgx_backing *backing)
+			   struct sgx_backing *backing, bool indirect)
 {
-	struct mem_cgroup *encl_memcg = sgx_encl_get_mem_cgroup(encl);
-	struct mem_cgroup *memcg = set_active_memcg(encl_memcg);
+	struct mem_cgroup *encl_memcg;
+	struct mem_cgroup *memcg;
 	int ret;
 
-	ret = __sgx_encl_get_backing(encl, page_index, backing);
+	if (!indirect)
+		return  __sgx_encl_get_backing(encl, page_index, backing);
 
+	encl_memcg = sgx_encl_get_mem_cgroup(encl);
+	memcg = set_active_memcg(encl_memcg);
+	ret = __sgx_encl_get_backing(encl, page_index, backing);
 	set_active_memcg(memcg);
 	mem_cgroup_put(encl_memcg);
 
