@@ -107,6 +107,7 @@ static bool sgx_cgroup_lru_empty(struct misc_cg *root)
  * sgx_cgroup_reclaim_pages() - reclaim EPC from a cgroup tree
  * @root:	The root of cgroup tree to reclaim from.
  * @start:	The descendant cgroup from which to start the tree walking.
+ * @charge_mm:	The mm to charge for backing store allocation.
  *
  * This function performs a pre-order walk in the cgroup tree under the given
  * root, starting from the node %start, or from the root if %start is NULL. The
@@ -126,7 +127,8 @@ static bool sgx_cgroup_lru_empty(struct misc_cg *root)
  * release the reference if the returned is not used as %start for a subsequent
  * call.
  */
-static struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct misc_cg *start)
+static struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct misc_cg *start,
+						struct mm_struct *charge_mm)
 {
 	struct cgroup_subsys_state *css_root, *pos;
 	struct cgroup_subsys_state *next = NULL;
@@ -142,7 +144,7 @@ static struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct mis
 
 	while (cnt < SGX_NR_TO_SCAN) {
 		sgx_cg = sgx_cgroup_from_misc_cg(css_misc(pos));
-		cnt += sgx_reclaim_pages(&sgx_cg->lru);
+		cnt += sgx_reclaim_pages(&sgx_cg->lru, charge_mm);
 
 		rcu_read_lock();
 
@@ -218,7 +220,8 @@ static void sgx_cgroup_reclaim_work_func(struct work_struct *work)
 	 * blocked until a worker makes its way through the global work queue.
 	 */
 	while (sgx_cgroup_should_reclaim(sgx_cg)) {
-		cg_next = sgx_cgroup_reclaim_pages(sgx_cg->cg, cg_next);
+		 /* Indirect reclaim, no mm to charge, so NULL: */
+		cg_next = sgx_cgroup_reclaim_pages(sgx_cg->cg, cg_next, NULL);
 		cond_resched();
 	}
 
@@ -266,7 +269,7 @@ int sgx_cgroup_try_charge(struct sgx_cgroup *sgx_cg, enum sgx_reclaim reclaim)
 			goto out;
 		}
 
-		cg_next = sgx_cgroup_reclaim_pages(sgx_cg->cg, cg_next);
+		cg_next = sgx_cgroup_reclaim_pages(sgx_cg->cg, cg_next, current->mm);
 		cond_resched();
 	}
 
