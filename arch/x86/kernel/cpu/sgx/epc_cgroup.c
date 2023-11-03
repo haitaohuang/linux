@@ -131,7 +131,7 @@ void sgx_epc_cgroup_isolate_pages(struct misc_cg *root,
 }
 
 static unsigned int sgx_epc_cgroup_reclaim_pages(unsigned int nr_pages,
-						 struct misc_cg *root)
+						 struct misc_cg *root, bool indirect)
 {
 	LIST_HEAD(iso);
 	/*
@@ -143,7 +143,7 @@ static unsigned int sgx_epc_cgroup_reclaim_pages(unsigned int nr_pages,
 	nr_pages = min(nr_pages, SGX_NR_TO_SCAN_MAX);
 	sgx_epc_cgroup_isolate_pages(root, nr_pages, &iso);
 
-	return sgx_do_epc_reclamation(&iso);
+	return sgx_do_epc_reclamation(&iso, indirect);
 }
 
 /*
@@ -191,7 +191,7 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 			break;
 
 		/* Keep reclaiming until above condition is met. */
-		sgx_epc_cgroup_reclaim_pages((unsigned int)(cur - max), epc_cg->cg);
+		sgx_epc_cgroup_reclaim_pages((unsigned int)(cur - max), epc_cg->cg, true);
 	}
 }
 
@@ -214,7 +214,7 @@ static int __sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg,
 			return -EBUSY;
 		}
 
-		if (!sgx_epc_cgroup_reclaim_pages(1, epc_cg->cg))
+		if (!sgx_epc_cgroup_reclaim_pages(1, epc_cg->cg, false))
 			/* All pages were too young to reclaim, try again */
 			schedule();
 	}

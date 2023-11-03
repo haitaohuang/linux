@@ -274,7 +274,7 @@ static void sgx_encl_ewb(struct sgx_epc_page *epc_page,
 }
 
 static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
-				struct sgx_backing *backing)
+				struct sgx_backing *backing, bool indirect)
 {
 	struct sgx_encl_page *encl_page = epc_page->owner;
 	struct sgx_encl *encl = encl_page->encl;
@@ -290,7 +290,7 @@ static void sgx_reclaimer_write(struct sgx_epc_page *epc_page,
 
 	if (!encl->secs_child_cnt && test_bit(SGX_ENCL_INITIALIZED, &encl->flags)) {
 		ret = sgx_encl_alloc_backing(encl, PFN_DOWN(encl->size),
-					   &secs_backing);
+					   &secs_backing, indirect);
 		if (ret)
 			goto out;
 
@@ -346,6 +346,7 @@ unsigned int  sgx_isolate_epc_pages(struct sgx_epc_lru_list *lru, unsigned int n
 /**
  * sgx_do_epc_reclamation() - Perform reclamation for isolated EPC pages.
  * @iso:		List of isolated pages for reclamation
+ * @indirect:		In ksgxd or EPC cgroup workqueue threads
  *
  * Take a list of EPC pages and reclaim them to the enclave's private shmem files.  Do not
  * reclaim the pages that have been accessed since the last scan, and move each of those pages
@@ -362,7 +363,7 @@ unsigned int  sgx_isolate_epc_pages(struct sgx_epc_lru_list *lru, unsigned int n
  *
  * Return: number of pages successfully reclaimed.
  */
-unsigned int sgx_do_epc_reclamation(struct list_head *iso)
+unsigned int sgx_do_epc_reclamation(struct list_head *iso, bool indirect)
 {
 	struct sgx_backing backing[SGX_NR_TO_SCAN_MAX];
 	struct sgx_epc_page *epc_page, *tmp;
@@ -384,7 +385,7 @@ unsigned int sgx_do_epc_reclamation(struct list_head *iso)
 		page_index = PFN_DOWN(encl_page->desc - encl_page->encl->base);
 
 		mutex_lock(&encl_page->encl->lock);
-		ret = sgx_encl_alloc_backing(encl_page->encl, page_index, &backing[i]);
+		ret = sgx_encl_alloc_backing(encl_page->encl, page_index, &backing[i], indirect);
 		if (ret) {
 			mutex_unlock(&encl_page->encl->lock);
 			goto skip;
@@ -411,7 +412,7 @@ skip:
 	i = 0;
 	list_for_each_entry_safe(epc_page, tmp, iso, list) {
 		encl_page = epc_page->owner;
-		sgx_reclaimer_write(epc_page, &backing[i++]);
+		sgx_reclaimer_write(epc_page, &backing[i++], indirect);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
 		sgx_epc_page_reset_state(epc_page);
@@ -422,7 +423,7 @@ skip:
 	return i;
 }
 
-static void sgx_reclaim_epc_pages_global(void)
+static void sgx_reclaim_epc_pages_global(bool indirect)
 {
 	unsigned int nr_to_scan = SGX_NR_TO_SCAN;
 	LIST_HEAD(iso);
@@ -432,7 +433,7 @@ static void sgx_reclaim_epc_pages_global(void)
 	else
 		sgx_isolate_epc_pages(&sgx_global_lru, nr_to_scan, &iso);
 
-	sgx_do_epc_reclamation(&iso);
+	sgx_do_epc_reclamation(&iso, indirect);
 }
 
 static bool sgx_should_reclaim(unsigned long watermark)
@@ -449,7 +450,7 @@ static bool sgx_should_reclaim(unsigned long watermark)
 void sgx_reclaim_direct(void)
 {
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
-		sgx_reclaim_epc_pages_global();
+		sgx_reclaim_epc_pages_global(false);
 }
 
 static int ksgxd(void *p)
@@ -472,7 +473,7 @@ static int ksgxd(void *p)
 				     sgx_should_reclaim(SGX_NR_HIGH_PAGES));
 
 		if (sgx_should_reclaim(SGX_NR_HIGH_PAGES))
-			sgx_reclaim_epc_pages_global();
+			sgx_reclaim_epc_pages_global(true);
 
 		cond_resched();
 	}
@@ -493,11 +494,6 @@ static bool __init sgx_page_reclaimer_init(void)
 	sgx_lru_init(&sgx_global_lru);
 
 	return true;
-}
-
-bool current_is_ksgxd(void)
-{
-	return current == ksgxd_tsk;
 }
 
 static struct sgx_epc_page *__sgx_alloc_epc_page_from_node(int nid)
@@ -653,7 +649,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 		 * Need to do a global reclamation if cgroup was not full but free
 		 * physical pages run out, causing __sgx_alloc_epc_page() to fail.
 		 */
-		sgx_reclaim_epc_pages_global();
+		sgx_reclaim_epc_pages_global(false);
 		cond_resched();
 	}
 
