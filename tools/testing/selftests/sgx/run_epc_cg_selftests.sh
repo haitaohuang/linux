@@ -19,15 +19,17 @@ cgcreate -g misc:$TEST_CG_SUB3
 cgcreate -g misc:$TEST_CG_SUB4
 
 # Default to V2
-CG_ROOT=/sys/fs/cgroup
+CG_MISC_ROOT=/sys/fs/cgroup
+CG_MEM_ROOT=/sys/fs/cgroup
 if [ ! -d "/sys/fs/cgroup/misc" ]; then
     echo "# cgroup V2 is in use."
 else
     echo "# cgroup V1 is in use."
-    CG_ROOT=/sys/fs/cgroup/misc
+    CG_MISC_ROOT=/sys/fs/cgroup/misc
+    CG_MEM_ROOT=/sys/fs/cgroup/memory
 fi
 
-CAPACITY=$(grep "sgx_epc" "$CG_ROOT/misc.capacity" | awk '{print $2}')
+CAPACITY=$(grep "sgx_epc" "$CG_MISC_ROOT/misc.capacity" | awk '{print $2}')
 # This is below number of VA pages needed for enclave of capacity size. So
 # should fail oversubscribed cases
 SMALL=$(( CAPACITY / 512 ))
@@ -39,9 +41,9 @@ LARGE=$(( SMALL * 4 ))
 # Load lots of enclaves
 LARGER=$CAPACITY
 echo "# Setting up limits."
-echo "sgx_epc $SMALL" | tee $CG_ROOT/$TEST_CG_SUB1/misc.max
-echo "sgx_epc $LARGE" | tee $CG_ROOT/$TEST_CG_SUB2/misc.max
-echo "sgx_epc $LARGER" | tee $CG_ROOT/$TEST_CG_SUB4/misc.max
+echo "sgx_epc $SMALL" | tee $CG_MISC_ROOT/$TEST_CG_SUB1/misc.max
+echo "sgx_epc $LARGE" | tee $CG_MISC_ROOT/$TEST_CG_SUB2/misc.max
+echo "sgx_epc $LARGER" | tee $CG_MISC_ROOT/$TEST_CG_SUB4/misc.max
 
 timestamp=$(date +%Y%m%d_%H%M%S)
 
@@ -145,13 +147,12 @@ fi
 
 echo "# PASSED LARGER limit tests."
 
-
 echo "# Start 10 concurrent unclobbered_vdso_oversubscribed tests with LARGER limit,
       randomly kill one, expecting no failure...."
 pids=()
 for i in {1..10}; do
     (
-        cgexec -g misc:$TEST_CG_SUB4 $test_cmd >cgtest_larger_$timestamp.$i.log 2>&1
+        cgexec -g misc:$TEST_CG_SUB4 $test_cmd >cgtest_larger_kill_$timestamp.$i.log 2>&1
     ) &
     pids+=($!)
 done
@@ -183,9 +184,47 @@ if [[ $any_failure -ne 0 ]]; then
     exit 1
 fi
 
-sleep 1
+cgcreate -g memory:$TEST_CG_SUB2
+if [ $? -ne 0 ]; then
+    echo "# Failed creating memory controller."
+    cgdelete -r -g misc:$TEST_ROOT_CG
+    exit 1
+fi
+MEM_LIMIT_TOO_SMALL=$((CAPACITY - LARGE ))
+echo "$MEM_LIMIT_TOO_SMALL" | tee $CG_MEM_ROOT/$TEST_CG_SUB2/memory.limit_in_bytes
 
-USAGE=$(grep '^sgx_epc' "$CG_ROOT/$TEST_ROOT_CG/misc.current" | awk '{print $2}')
+echo "# Start 4 concurrent unclobbered_vdso_oversubscribed tests with LARGE limit,
+        limit memory usage too small, expecting all failures...."
+pids=()
+for i in {1..4}; do
+    (
+        cgexec -g memory:$TEST_CG_SUB2 -g misc:$TEST_CG_SUB2 $test_cmd >cgtest_large_oom_$timestamp.$i.log 2>&1
+    ) &
+    pids+=($!)
+done
+
+any_success=0
+for pid in "${pids[@]}"; do
+    wait "$pid"
+    status=$?
+    if [[ $status -eq 0 ]]; then
+	echo "# Process $pid returned success, unexpected..."
+        any_success=1
+    fi
+done
+
+if [[ $any_success -ne 0 ]]; then
+    echo "# Failed on tests with memcontrol, no test fails."
+    cgdelete -r -g misc:$TEST_ROOT_CG
+    cgdelete -r -g memory:$TEST_ROOT_CG
+    exit 1
+fi
+
+echo "# PASSED LARGE limit tests with memcontrol."
+
+sleep 2
+
+USAGE=$(grep '^sgx_epc' "$CG_MISC_ROOT/$TEST_ROOT_CG/misc.current" | awk '{print $2}')
 if [ "$USAGE" -ne 0 ]; then
     echo "# Failed: Final usage is $USAGE, not 0."
 else
@@ -193,4 +232,5 @@ else
     echo "# PASSED ALL cgroup limit tests, cleanup cgroups..."
 fi
 cgdelete -r -g misc:$TEST_ROOT_CG
+cgdelete -r -g memory:$TEST_ROOT_CG
 echo "# done."
