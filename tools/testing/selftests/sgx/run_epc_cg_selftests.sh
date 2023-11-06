@@ -1,7 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 # Copyright(c) 2023 Intel Corporation.
-
+echo "# Note: please build test_sgx with kernel v6.4 or above. This script relies on the '-t' option
+        from the selftest harness"
 TEST_ROOT_CG=selftest
 cgcreate -g misc:$TEST_ROOT_CG
 if [ $? -ne 0 ]; then
