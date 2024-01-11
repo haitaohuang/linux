@@ -286,20 +286,24 @@ out:
 	mutex_unlock(&encl->lock);
 }
 
-/*
- * Take a fixed number of pages from the head of the active page pool and
- * reclaim them to the enclave's private shmem files. Skip the pages, which have
- * been accessed since the last scan. Move those pages to the tail of active
- * page pool so that the pages get scanned in LRU like fashion.
+/**
+ * sgx_reclaim_pages() - Reclaim a fixed number of pages from an LRU
  *
- * Batch process a chunk of pages (at the moment 16) in order to degrade amount
- * of IPI's and ETRACK's potentially required. sgx_encl_ewb() does degrade a bit
- * among the HW threads with three stage EWB pipeline (EWB, ETRACK + EWB and IPI
- * + EWB) but not sufficiently. Reclaiming one page at a time would also be
- * problematic as it would increase the lock contention too much, which would
- * halt forward progress.
+ * Take a fixed number of pages from the head of a given LRU and reclaim them to the enclave's
+ * private shmem files. Skip the pages, which have been accessed since the last scan. Move
+ * those pages to the tail of the list so that the pages get scanned in LRU like fashion.
+ *
+ * Batch process a chunk of pages (at the moment 16) in order to degrade amount of IPI's and
+ * ETRACK's potentially required. sgx_encl_ewb() does degrade a bit among the HW threads with
+ * three stage EWB pipeline (EWB, ETRACK + EWB and IPI + EWB) but not sufficiently. Reclaiming
+ * one page at a time would also be problematic as it would increase the lock contention too
+ * much, which would halt forward progress.
+ *
+ * @lru:	The LRU from which pages are reclaimed.
+ * @nr_to_scan: Pointer to the target number of pages to scan, must be less than SGX_NR_TO_SCAN.
+ * Return:	Number of pages reclaimed.
  */
-static void sgx_reclaim_pages(void)
+unsigned int sgx_reclaim_pages(struct sgx_epc_lru_list *lru, unsigned int *nr_to_scan)
 {
 	struct sgx_epc_page *chunk[SGX_NR_TO_SCAN];
 	struct sgx_backing backing[SGX_NR_TO_SCAN];
@@ -310,10 +314,10 @@ static void sgx_reclaim_pages(void)
 	int ret;
 	int i;
 
-	spin_lock(&sgx_global_lru.lock);
-	for (i = 0; i < SGX_NR_TO_SCAN; i++) {
-		epc_page = list_first_entry_or_null(&sgx_global_lru.reclaimable,
-						    struct sgx_epc_page, list);
+	spin_lock(&lru->lock);
+
+	for (; *nr_to_scan > 0; --(*nr_to_scan)) {
+		epc_page = list_first_entry_or_null(&lru->reclaimable, struct sgx_epc_page, list);
 		if (!epc_page)
 			break;
 
@@ -328,7 +332,8 @@ static void sgx_reclaim_pages(void)
 			 */
 			epc_page->flags &= ~SGX_EPC_PAGE_RECLAIMER_TRACKED;
 	}
-	spin_unlock(&sgx_global_lru.lock);
+
+	spin_unlock(&lru->lock);
 
 	for (i = 0; i < cnt; i++) {
 		epc_page = chunk[i];
@@ -351,9 +356,9 @@ static void sgx_reclaim_pages(void)
 		continue;
 
 skip:
-		spin_lock(&sgx_global_lru.lock);
-		list_add_tail(&epc_page->list, &sgx_global_lru.reclaimable);
-		spin_unlock(&sgx_global_lru.lock);
+		spin_lock(&lru->lock);
+		list_add_tail(&epc_page->list, &lru->reclaimable);
+		spin_unlock(&lru->lock);
 
 		kref_put(&encl_page->encl->refcount, sgx_encl_release);
 
@@ -366,6 +371,7 @@ skip:
 			sgx_reclaimer_block(epc_page);
 	}
 
+	ret = 0;
 	for (i = 0; i < cnt; i++) {
 		epc_page = chunk[i];
 		if (!epc_page)
@@ -378,13 +384,23 @@ skip:
 		epc_page->flags &= ~SGX_EPC_PAGE_RECLAIMER_TRACKED;
 
 		sgx_free_epc_page(epc_page);
+		ret++;
 	}
+
+	return (unsigned int)ret;
 }
 
 static bool sgx_should_reclaim(unsigned long watermark)
 {
 	return atomic_long_read(&sgx_nr_free_pages) < watermark &&
 	       !list_empty(&sgx_global_lru.reclaimable);
+}
+
+static void sgx_reclaim_pages_global(void)
+{
+	unsigned int nr_to_scan = SGX_NR_TO_SCAN;
+
+	sgx_reclaim_pages(&sgx_global_lru, &nr_to_scan);
 }
 
 /*
@@ -395,7 +411,7 @@ static bool sgx_should_reclaim(unsigned long watermark)
 void sgx_reclaim_direct(void)
 {
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
-		sgx_reclaim_pages();
+		sgx_reclaim_pages_global();
 }
 
 static int ksgxd(void *p)
@@ -418,7 +434,7 @@ static int ksgxd(void *p)
 				     sgx_should_reclaim(SGX_NR_HIGH_PAGES));
 
 		if (sgx_should_reclaim(SGX_NR_HIGH_PAGES))
-			sgx_reclaim_pages();
+			sgx_reclaim_pages_global();
 
 		cond_resched();
 	}
@@ -605,7 +621,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 		 * Need to do a global reclamation if cgroup was not full but free
 		 * physical pages run out, causing __sgx_alloc_epc_page() to fail.
 		 */
-		sgx_reclaim_pages();
+		sgx_reclaim_pages_global();
 		cond_resched();
 	}
 
