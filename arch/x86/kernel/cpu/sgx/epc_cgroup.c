@@ -176,16 +176,38 @@ static void sgx_epc_cgroup_reclaim_work_func(struct work_struct *work)
 /**
  * sgx_epc_cgroup_try_charge() - try to charge cgroup for a single EPC page
  * @epc_cg:	The EPC cgroup to be charged for the page.
+ * @reclaim:	Whether or not synchronous reclaim is allowed
  * Return:
  * * %0 - If successfully charged.
  * * -errno - for failures.
  */
-int sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg)
+int sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg, bool reclaim)
 {
 	if (!epc_cg)
 		return -EINVAL;
 
-	return  misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg, PAGE_SIZE);
+	for (;;) {
+		if (!misc_cg_try_charge(MISC_CG_RES_SGX_EPC, epc_cg->cg,
+					PAGE_SIZE))
+			break;
+
+		if (sgx_epc_cgroup_lru_empty(epc_cg->cg))
+			return -ENOMEM;
+
+		if (signal_pending(current))
+			return -ERESTARTSYS;
+
+		if (!reclaim) {
+			queue_work(sgx_epc_cg_wq, &epc_cg->reclaim_work);
+			return -EBUSY;
+		}
+
+		if (!sgx_epc_cgroup_reclaim_pages(epc_cg->cg, false))
+			/* All pages were too young to reclaim, try again a little later */
+			schedule();
+	}
+
+	return 0;
 }
 
 /**
