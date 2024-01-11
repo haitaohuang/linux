@@ -586,7 +586,7 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, bool reclaim)
 	int ret;
 
 	epc_cg = sgx_get_current_epc_cg();
-	ret = sgx_epc_cgroup_try_charge(epc_cg);
+	ret = sgx_epc_cgroup_try_charge(epc_cg, reclaim);
 	if (ret) {
 		sgx_put_epc_cg(epc_cg);
 		return ERR_PTR(ret);
