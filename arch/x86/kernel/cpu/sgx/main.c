@@ -34,12 +34,23 @@ static struct sgx_epc_lru_list sgx_global_lru;
 
 static inline struct sgx_epc_lru_list *sgx_lru_list(struct sgx_epc_page *epc_page)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (epc_page->epc_cg)
+		return &epc_page->epc_cg->lru;
+
+	/* This should not happen if kernel is configured correctly */
+	WARN_ON_ONCE(1);
+#endif
 	return &sgx_global_lru;
 }
 
 static inline bool sgx_can_reclaim(void)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	return !sgx_epc_cgroup_lru_empty(misc_cg_root());
+#else
 	return !list_empty(&sgx_global_lru.reclaimable);
+#endif
 }
 
 static atomic_long_t sgx_nr_free_pages = ATOMIC_LONG_INIT(0);
@@ -410,7 +421,10 @@ static void sgx_reclaim_pages_global(bool indirect)
 {
 	unsigned int nr_to_scan = SGX_NR_TO_SCAN;
 
-	sgx_reclaim_pages(&sgx_global_lru, &nr_to_scan, indirect);
+	if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
+		sgx_epc_cgroup_reclaim_pages(misc_cg_root(), indirect);
+	else
+		sgx_reclaim_pages(&sgx_global_lru, &nr_to_scan, indirect);
 }
 
 /*
