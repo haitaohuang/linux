@@ -96,7 +96,7 @@ bool sgx_epc_cgroup_lru_empty(struct misc_cg *root)
  * @indirect:   In ksgxd or EPC cgroup work queue context.
  * Return:	Number of pages reclaimed.
  */
-static unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root, bool indirect)
+unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root, bool indirect)
 {
 	/*
 	 * Attempting to reclaim only a few pages will often fail and is
