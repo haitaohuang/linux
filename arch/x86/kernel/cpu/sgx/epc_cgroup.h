@@ -31,6 +31,12 @@ static inline int sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg, bool 
 static inline void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg) { }
 
 static inline void sgx_epc_cgroup_init(void) { }
+
+static inline unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root,
+							bool indirect)
+{
+	return 0;
+}
 #else
 struct sgx_epc_cgroup {
 	struct misc_cg			*cg;
@@ -69,6 +75,9 @@ static inline void sgx_put_epc_cg(struct sgx_epc_cgroup *epc_cg)
 int sgx_epc_cgroup_try_charge(struct sgx_epc_cgroup *epc_cg, bool reclaim);
 void sgx_epc_cgroup_uncharge(struct sgx_epc_cgroup *epc_cg);
 bool sgx_epc_cgroup_lru_empty(struct misc_cg *root);
+unsigned int sgx_epc_cgroup_reclaim_pages(struct misc_cg *root,
+					  bool indirect);
+
 void sgx_epc_cgroup_init(void);
 
 #endif
