@@ -650,11 +650,9 @@ void sgx_free_epc_page(struct sgx_epc_page *page)
 	struct sgx_numa_node *node = section->node;
 
 #ifdef CONFIG_CGROUP_SGX_EPC
-	if (page->sgx_cg) {
-		sgx_cgroup_uncharge(page->sgx_cg);
-		sgx_put_cg(page->sgx_cg);
-		page->sgx_cg = NULL;
-	}
+	sgx_cgroup_uncharge(page->sgx_cg);
+	sgx_put_cg(page->sgx_cg);
+	page->sgx_cg = NULL;
 #endif
 
 	spin_lock(&node->lock);
