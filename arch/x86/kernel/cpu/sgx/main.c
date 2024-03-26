@@ -34,6 +34,16 @@ static struct sgx_epc_lru_list sgx_global_lru;
 
 static inline struct sgx_epc_lru_list *sgx_lru_list(struct sgx_epc_page *epc_page)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	if (epc_page->sgx_cg)
+		return &epc_page->sgx_cg->lru;
+
+	/*
+	 * This should not happen when cgroup is enabled: Every page belongs
+	 * to a cgroup, or the root by default.
+	 */
+	WARN_ON_ONCE(1);
+#endif
 	return &sgx_global_lru;
 }
 
@@ -42,7 +52,11 @@ static inline struct sgx_epc_lru_list *sgx_lru_list(struct sgx_epc_page *epc_pag
  */
 static inline bool sgx_can_reclaim(void)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	return !sgx_cgroup_lru_empty(misc_cg_root());
+#else
 	return !list_empty(&sgx_global_lru.reclaimable);
+#endif
 }
 
 static atomic_long_t sgx_nr_free_pages = ATOMIC_LONG_INIT(0);
@@ -404,7 +418,10 @@ static bool sgx_should_reclaim(unsigned long watermark)
 
 static void sgx_reclaim_pages_global(struct mm_struct *charge_mm)
 {
-	sgx_reclaim_pages(&sgx_global_lru, charge_mm);
+	if (IS_ENABLED(CONFIG_CGROUP_SGX_EPC))
+		sgx_cgroup_reclaim_pages(misc_cg_root(), charge_mm);
+	else
+		sgx_reclaim_pages(&sgx_global_lru, charge_mm);
 }
 
 /*
@@ -414,6 +431,16 @@ static void sgx_reclaim_pages_global(struct mm_struct *charge_mm)
  */
 void sgx_reclaim_direct(void)
 {
+#ifdef CONFIG_CGROUP_SGX_EPC
+	struct sgx_cgroup *sgx_cg = sgx_get_current_cg();
+
+	/* Make sure there are some free pages at cgroup level */
+	if (sgx_cg && sgx_cgroup_should_reclaim(sgx_cg)) {
+		sgx_cgroup_reclaim_pages(sgx_cg->cg, current->mm);
+		sgx_put_cg(sgx_cg);
+	}
+#endif
+	/* Make sure there are some free pages at global level */
 	if (sgx_should_reclaim(SGX_NR_LOW_PAGES))
 		sgx_reclaim_pages_global(current->mm);
 }
