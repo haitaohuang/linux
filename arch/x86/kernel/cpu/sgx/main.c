@@ -32,9 +32,30 @@ static DEFINE_XARRAY(sgx_epc_address_space);
  */
 static struct sgx_epc_lru_list sgx_global_lru;
 
+/*
+ * Get the per-cgroup or global LRU list that tracks the given reclaimable page.
+ */
 static inline struct sgx_epc_lru_list *sgx_epc_page_lru(struct sgx_epc_page *epc_page)
 {
+#ifdef CONFIG_CGROUP_MISC
+	/*
+	 * epc_page->sgx_cg here is never NULL during a reclaimable epc_page's
+	 * life between sgx_alloc_epc_page() and sgx_free_epc_page():
+	 *
+	 * In sgx_alloc_epc_page(), epc_page->sgx_cg is set to the return from
+	 * sgx_get_current_cg() which is the misc cgroup of the current task, or
+	 * the root by default even if the misc cgroup is disabled by kernel
+	 * command line.
+	 *
+	 * epc_page->sgx_cg is only unset by sgx_free_epc_page().
+	 *
+	 * This function is never used before sgx_alloc_epc_page() or after
+	 * sgx_free_epc_page().
+	 */
+	return &epc_page->sgx_cg->lru;
+#else
 	return &sgx_global_lru;
+#endif
 }
 
 /*
@@ -42,7 +63,10 @@ static inline struct sgx_epc_lru_list *sgx_epc_page_lru(struct sgx_epc_page *epc
  */
 static inline bool sgx_can_reclaim_global(void)
 {
-	return !list_empty(&sgx_global_lru.reclaimable);
+	if (IS_ENABLED(CONFIG_CGROUP_MISC))
+		return !sgx_cgroup_lru_empty(misc_cg_root());
+	else
+		return !list_empty(&sgx_global_lru.reclaimable);
 }
 
 static atomic_long_t sgx_nr_free_pages = ATOMIC_LONG_INIT(0);
@@ -402,9 +426,14 @@ static bool sgx_should_reclaim_global(unsigned long watermark)
 		sgx_can_reclaim_global();
 }
 
-static void sgx_reclaim_pages_global(struct mm_struct *charge_mm)
+static struct misc_cg *sgx_reclaim_pages_global(struct misc_cg *next_cg,
+						struct mm_struct *charge_mm)
 {
+	if (IS_ENABLED(CONFIG_CGROUP_MISC))
+		return sgx_cgroup_reclaim_pages(misc_cg_root(), next_cg, charge_mm);
+
 	sgx_reclaim_pages(&sgx_global_lru, charge_mm);
+	return NULL;
 }
 
 /*
@@ -414,12 +443,35 @@ static void sgx_reclaim_pages_global(struct mm_struct *charge_mm)
  */
 void sgx_reclaim_direct(void)
 {
+	struct sgx_cgroup *sgx_cg = sgx_get_current_cg();
+	struct misc_cg *cg = misc_from_sgx(sgx_cg);
+	struct misc_cg *next_cg = NULL;
+
+	/*
+	 * Make sure there are some free pages at both cgroup and global levels.
+	 * In both cases, only make one attempt of reclamation to avoid lengthy
+	 * block on the caller.
+	 */
+	if (sgx_cg && sgx_cgroup_should_reclaim(sgx_cg))
+		next_cg = sgx_cgroup_reclaim_pages(cg, next_cg, current->mm);
+
+	if (next_cg != cg)
+		put_misc_cg(next_cg);
+
+	next_cg = NULL;
 	if (sgx_should_reclaim_global(SGX_NR_LOW_PAGES))
-		sgx_reclaim_pages_global(current->mm);
+		next_cg = sgx_reclaim_pages_global(next_cg, current->mm);
+
+	if (next_cg != misc_cg_root())
+		put_misc_cg(next_cg);
+
+	sgx_put_cg(sgx_cg);
 }
 
 static int ksgxd(void *p)
 {
+	struct misc_cg *next_cg = NULL;
+
 	set_freezable();
 
 	/*
@@ -437,11 +489,15 @@ static int ksgxd(void *p)
 				     kthread_should_stop() ||
 				     sgx_should_reclaim_global(SGX_NR_HIGH_PAGES));
 
-		if (sgx_should_reclaim_global(SGX_NR_HIGH_PAGES))
+		while (!kthread_should_stop() && sgx_should_reclaim_global(SGX_NR_HIGH_PAGES)) {
 			/* Indirect reclaim, no mm to charge, so NULL: */
-			sgx_reclaim_pages_global(NULL);
+			next_cg = sgx_reclaim_pages_global(next_cg, NULL);
+			cond_resched();
+		}
 
-		cond_resched();
+		if (next_cg != misc_cg_root())
+			put_misc_cg(next_cg);
+		next_cg = NULL;
 	}
 
 	return 0;
@@ -583,6 +639,7 @@ int sgx_unmark_page_reclaimable(struct sgx_epc_page *page)
  */
 struct sgx_epc_page *sgx_alloc_epc_page(void *owner, enum sgx_reclaim reclaim)
 {
+	struct misc_cg *next_cg = NULL;
 	struct sgx_cgroup *sgx_cg;
 	struct sgx_epc_page *page;
 	int ret;
@@ -616,9 +673,18 @@ struct sgx_epc_page *sgx_alloc_epc_page(void *owner, enum sgx_reclaim reclaim)
 			break;
 		}
 
-		sgx_reclaim_pages_global(current->mm);
+		/*
+		 * At this point, the usage within this cgroup is under its
+		 * limit but there is no physical page left for allocation.
+		 * Perform a global reclaim to get some pages released from any
+		 * cgroup with reclaimable pages.
+		 */
+		next_cg = sgx_reclaim_pages_global(next_cg, current->mm);
 		cond_resched();
 	}
+
+	if (next_cg != misc_cg_root())
+		put_misc_cg(next_cg);
 
 	if (!IS_ERR(page)) {
 		WARN_ON_ONCE(sgx_epc_page_get_cgroup(page));
