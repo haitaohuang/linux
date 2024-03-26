@@ -67,7 +67,7 @@ static inline u64 sgx_cgroup_max_pages_to_root(struct sgx_cgroup *sgx_cg)
  *
  * Return: %true if all cgroups under the specified root have empty LRU lists.
  */
-static bool sgx_cgroup_lru_empty(struct misc_cg *root)
+bool sgx_cgroup_lru_empty(struct misc_cg *root)
 {
 	struct cgroup_subsys_state *css_root;
 	struct cgroup_subsys_state *pos;
@@ -127,8 +127,8 @@ static bool sgx_cgroup_lru_empty(struct misc_cg *root)
  * release the reference if the returned is not used as %start for a subsequent
  * call.
  */
-static struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct misc_cg *start,
-						struct mm_struct *charge_mm)
+struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct misc_cg *start,
+					 struct mm_struct *charge_mm)
 {
 	struct cgroup_subsys_state *css_root, *pos;
 	struct cgroup_subsys_state *next = NULL;
@@ -181,7 +181,7 @@ static struct misc_cg *sgx_cgroup_reclaim_pages(struct misc_cg *root, struct mis
  * threshold (%SGX_CG_MIN_FREE_PAGE) and there are reclaimable pages within the
  * cgroup.
  */
-static bool sgx_cgroup_should_reclaim(struct sgx_cgroup *sgx_cg)
+bool sgx_cgroup_should_reclaim(struct sgx_cgroup *sgx_cg)
 {
 	u64 cur, max;
 
