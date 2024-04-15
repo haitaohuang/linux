@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0
 # Copyright(c) 2023, 2024 Intel Corporation.
 
+
+# Kselftest framework requirement - SKIP code is 4.
+ksft_skip=4
+if [ "$(id -u)" -ne 0 ]; then
+    echo "SKIP: SGX Cgroup tests need root priviledges."
+    exit $ksft_skip
+fi
+
 TEST_ROOT_CG=selftest
 TEST_CG_SUB1=$TEST_ROOT_CG/test1
 TEST_CG_SUB2=$TEST_ROOT_CG/test2
