@@ -22,6 +22,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/acpi.h>
+#include <linux/platform_data/psp.h>
 
 #include "ccp-dev.h"
 
@@ -80,6 +81,62 @@ static struct sp_dev_vdata *sp_get_acpi_version(struct platform_device *pdev)
 	return NULL;
 }
 
+static void sp_platform_fill_vdata(struct sp_dev_vdata *vdata,
+					struct psp_vdata *psp,
+					struct sev_vdata *sev,
+					const struct psp_platform_data *pdata)
+{
+	struct sev_vdata sevtmp = {
+		.cmdresp_reg = pdata->sev_cmd_resp_reg,
+		.cmdbuff_addr_lo_reg = pdata->sev_cmd_buf_lo_reg,
+		.cmdbuff_addr_hi_reg = pdata->sev_cmd_buf_hi_reg,
+	};
+	struct psp_vdata psptmp = {
+		.sev = sev,
+		.feature_reg = pdata->feature_reg,
+		.inten_reg = pdata->irq_en_reg,
+		.intsts_reg = pdata->irq_st_reg,
+	};
+
+	memcpy(sev, &sevtmp, sizeof(*sev));
+	memcpy(psp, &psptmp, sizeof(*psp));
+	vdata->psp_vdata = psp;
+}
+
+static struct sp_dev_vdata *sp_get_platform_version(struct sp_device *sp)
+{
+	struct psp_platform_data *pdata;
+	struct device *dev = sp->dev;
+	struct sp_dev_vdata *vdata;
+	struct psp_vdata *psp;
+	struct sev_vdata *sev;
+
+	pdata = dev_get_platdata(dev);
+	if (!pdata) {
+		dev_err(dev, "missing platform data\n");
+		return NULL;
+	}
+
+	vdata = devm_kzalloc(dev, sizeof(*vdata) + sizeof(*psp) + sizeof(*sev), GFP_KERNEL);
+	if (!vdata)
+		return NULL;
+
+	psp = (void *)vdata + sizeof(*vdata);
+	sev = (void *)psp + sizeof(*psp);
+	sp_platform_fill_vdata(vdata, psp, sev, pdata);
+
+	dev_dbg(dev, "PSP feature register:\t%x\n", psp->feature_reg);
+	dev_dbg(dev, "PSP IRQ enable register:\t%x\n", psp->inten_reg);
+	dev_dbg(dev, "PSP IRQ status register:\t%x\n", psp->intsts_reg);
+	dev_dbg(dev, "SEV cmdresp register:\t%x\n", sev->cmdresp_reg);
+	dev_dbg(dev, "SEV cmdbuf lo register:\t%x\n", sev->cmdbuff_addr_lo_reg);
+	dev_dbg(dev, "SEV cmdbuf hi register:\t%x\n", sev->cmdbuff_addr_hi_reg);
+	dev_dbg(dev, "SEV cmdresp IRQ:\t%x\n", pdata->mbox_irq_id);
+	dev_dbg(dev, "ACPI cmdresp register:\t%x\n", pdata->acpi_cmd_resp_reg);
+
+	return vdata;
+}
+
 static int sp_get_irqs(struct sp_device *sp)
 {
 	struct sp_platform *sp_platform = sp->dev_specific;
@@ -131,6 +188,8 @@ static int sp_platform_probe(struct platform_device *pdev)
 	sp->dev_specific = sp_platform;
 	sp->dev_vdata = pdev->dev.of_node ? sp_get_of_version(pdev)
 					 : sp_get_acpi_version(pdev);
+	if (!sp->dev_vdata)
+		sp->dev_vdata = sp_get_platform_version(sp);
 	if (!sp->dev_vdata) {
 		ret = -ENODEV;
 		dev_err(dev, "missing driver data\n");
