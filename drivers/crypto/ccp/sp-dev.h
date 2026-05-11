@@ -33,6 +33,9 @@
 
 #define PSP_FEATURE(psp, feat)	(psp->vdata && psp->vdata->platform_features & PLATFORM_FEATURE_##feat)
 
+/* Version is not indicative of feature support and all versions support SNP */
+#define PSP_QUIRK_IGNORE_VERSION	BIT(0)
+
 /* Structure to hold CCP device data */
 struct ccp_device;
 struct ccp_vdata {
