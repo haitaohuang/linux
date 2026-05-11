@@ -507,7 +507,8 @@ int __init snp_rmptable_init(void)
 	if (WARN_ON_ONCE(!cc_platform_has(CC_ATTR_HOST_SEV_SNP)))
 		return -ENOSYS;
 
-	if (WARN_ON_ONCE(!amd_iommu_snp_en))
+	if (!boot_cpu_has(X86_FEATURE_HYPERVISOR) &&
+	    WARN_ON_ONCE(!amd_iommu_snp_en))
 		return -ENOSYS;
 
 	if (!setup_rmptable())
