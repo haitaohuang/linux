@@ -745,6 +745,9 @@ static void __init ms_hyperv_init_mem_mapping(void)
 	insert_resource(&iomem_resource, &rmp_res);
 
 	snp_set_soft_rmptable();
+
+	if (!snp_probe_rmptable_info())
+		pr_warn("rmp probe failed\n");
 }
 
 const __initconst struct hypervisor_x86 x86_hyper_ms_hyperv = {

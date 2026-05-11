@@ -362,9 +362,16 @@ static void bsp_determine_snp(struct cpuinfo_x86 *c)
 		 * for which the RMP table entry format is currently defined or for
 		 * processors which support the architecturally defined RMPREAD
 		 * instruction.
+		 *
+		 * When running virtualized (i.e. nested SNP under Hyper-V) the RMP
+		 * is allocated by the kernel later in ms_hyperv_init_mem_mapping(),
+		 * which then calls snp_probe_rmptable_info() to populate the table
+		 * info. Don't clear SEV-SNP here in that case - it would prevent
+		 * the kernel from acting as an SNP host for nested guests.
 		 */
-		if (!cpu_has(c, X86_FEATURE_HYPERVISOR) &&
-		    (cpu_feature_enabled(X86_FEATURE_ZEN3) ||
+		if (cpu_has(c, X86_FEATURE_HYPERVISOR)) {
+			cc_platform_set(CC_ATTR_HOST_SEV_SNP);
+		} else if ((cpu_feature_enabled(X86_FEATURE_ZEN3) ||
 		     cpu_feature_enabled(X86_FEATURE_ZEN4) ||
 		     cpu_feature_enabled(X86_FEATURE_RMPREAD)) &&
 		    snp_probe_rmptable_info()) {
