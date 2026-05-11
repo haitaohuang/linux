@@ -709,6 +709,8 @@
 #define MSR_AMD64_RMP_SEGMENT_SHIFT(x)	(((x) & GENMASK_ULL(13, 8)) >> 8)
 
 #define MSR_SVSM_CAA			0xc001f000
+#define MSR_AMD64_VIRT_RMPUPDATE	0xc001f001
+#define MSR_AMD64_VIRT_PSMASH		0xc001f002
 
 /* AMD Collaborative Processor Performance Control MSRs */
 #define MSR_AMD_CPPC_CAP1		0xc00102b0

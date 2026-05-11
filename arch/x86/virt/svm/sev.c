@@ -850,6 +850,32 @@ void snp_dump_hva_rmpentry(unsigned long hva)
 	dump_rmpentry(PHYS_PFN(paddr));
 }
 
+static bool virt_snp_msr(void)
+{
+	return boot_cpu_has(X86_FEATURE_NESTED_VIRT_SNP_MSR);
+}
+
+/*
+ * This version of psmash is not implemented in hardware but always
+ * traps to L0 hypervisor. It doesn't follow usual wrmsr conventions.
+ * Inputs:
+ *   rax: 2MB aligned GPA
+ * Outputs:
+ *   rax: psmash return code
+ */
+static u64 virt_psmash(u64 paddr)
+{
+	int ret;
+
+	asm volatile(
+		"wrmsr\n\t"
+		: "=a"(ret)
+		: "a"(paddr), "c"(MSR_AMD64_VIRT_PSMASH)
+		: "memory", "cc"
+	);
+	return ret;
+}
+
 /*
  * PSMASH a 2MB aligned page into 4K pages in the RMP table while preserving the
  * Validated bit.
@@ -865,11 +891,15 @@ int psmash(u64 pfn)
 	if (!pfn_valid(pfn))
 		return -EINVAL;
 
-	/* Binutils version 2.36 supports the PSMASH mnemonic. */
-	asm volatile(".byte 0xF3, 0x0F, 0x01, 0xFF"
-		      : "=a" (ret)
-		      : "a" (paddr)
-		      : "memory", "cc");
+	if (virt_snp_msr()) {
+		ret = virt_psmash(paddr);
+	} else {
+		/* Binutils version 2.36 supports the PSMASH mnemonic. */
+		asm volatile(".byte 0xF3, 0x0F, 0x01, 0xFF"
+			      : "=a" (ret)
+			      : "a" (paddr)
+			      : "memory", "cc");
+	}
 
 	return ret;
 }
@@ -951,6 +981,31 @@ static int adjust_direct_map(u64 pfn, int rmp_level)
 }
 
 /*
+ * This version of rmpupdate is not implemented in hardware but always
+ * traps to L0 hypervisor. It doesn't follow usual wrmsr conventions.
+ * Inputs:
+ *   rax: 4KB aligned GPA
+ *   rdx: bytes 7:0 of new rmp entry
+ *   r8:  bytes 15:8 of new rmp entry
+ * Outputs:
+ *   rax: rmpupdate return code
+ */
+static u64 virt_rmpupdate(unsigned long paddr, struct rmp_state *val)
+{
+	int ret;
+	register u64 hi asm("r8") = ((u64 *)val)[1];
+	register u64 lo asm("rdx") = ((u64 *)val)[0];
+
+	asm volatile(
+		"wrmsr\n\t"
+		: "=a"(ret)
+		: "a"(paddr), "c"(MSR_AMD64_VIRT_RMPUPDATE), "r"(lo), "r"(hi)
+		: "memory", "cc"
+	);
+	return ret;
+}
+
+/*
  * It is expected that those operations are seldom enough so that no mutual
  * exclusion of updaters is needed and thus the overlap error condition below
  * should happen very rarely and would get resolved relatively quickly by
@@ -977,11 +1032,15 @@ static int rmpupdate(u64 pfn, struct rmp_state *state)
 		return -EFAULT;
 
 	do {
-		/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
-		asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
-			     : "=a" (ret)
-			     : "a" (paddr), "c" ((unsigned long)state)
-			     : "memory", "cc");
+		if (virt_snp_msr()) {
+			ret = virt_rmpupdate(paddr, state);
+		} else {
+			/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
+			asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"
+				     : "=a" (ret)
+				     : "a" (paddr), "c" ((unsigned long)state)
+				     : "memory", "cc");
+		}
 	} while (ret == RMPUPDATE_FAIL_OVERLAP);
 
 	if (ret) {
