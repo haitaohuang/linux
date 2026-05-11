@@ -35,6 +35,8 @@
 
 /* Version is not indicative of feature support and all versions support SNP */
 #define PSP_QUIRK_IGNORE_VERSION	BIT(0)
+/* PSP only supports SNP subset of commands (SEV init won't succeed) */
+#define PSP_QUIRK_SNP_ONLY		BIT(1)
 
 /* Structure to hold CCP device data */
 struct ccp_device;

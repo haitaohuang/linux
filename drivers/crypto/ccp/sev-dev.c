@@ -1297,6 +1297,11 @@ static int __sev_platform_init_locked(int *error)
 	if (rc)
 		return rc;
 
+	if (sev->snp_initialized && psp_master->vdata->quirks & PSP_QUIRK_SNP_ONLY) {
+		sev->state = SEV_STATE_INIT;
+		return 0;
+	}
+
 	rc = __sev_do_init_locked(&psp_ret);
 	if (rc && psp_ret == SEV_RET_SECURE_DATA_INVALID) {
 		/*
