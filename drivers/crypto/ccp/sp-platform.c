@@ -150,6 +150,16 @@ static int sp_get_irqs(struct sp_device *sp)
 	struct platform_device *pdev = to_platform_device(dev);
 	int ret;
 
+	if (sp_platform->is_platform_device) {
+		ret = psp_alloc_irq(pdev);
+		if (ret < 0) {
+			dev_notice(dev, "unable to get IRQ (%d)\n", ret);
+			return ret ?: -ENOENT;
+		}
+		sp->psp_irq = ret;
+		sp->ccp_irq = ret;
+		return 0;
+	}
 	sp_platform->irq_count = platform_irq_count(pdev);
 
 	ret = platform_get_irq(pdev, 0);
@@ -240,7 +250,7 @@ static int sp_platform_probe(struct platform_device *pdev)
 
 	ret = sp_init(sp);
 	if (ret)
-		goto e_err;
+		goto e_irq;
 
 	dev_notice(dev, "enabled\n");
 
@@ -248,6 +258,10 @@ static int sp_platform_probe(struct platform_device *pdev)
 
 e_err:
 	dev_notice(dev, "initialization failed\n");
+e_irq:
+	if (sp_platform->is_platform_device)
+		psp_free_irq(pdev);
+
 	return ret;
 }
 
@@ -255,10 +269,14 @@ static void sp_platform_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct sp_device *sp = dev_get_drvdata(dev);
+	struct sp_platform *sp_platform = sp->dev_specific;
 
 	sp_destroy(sp);
 
 	dev_notice(dev, "disabled\n");
+
+	if (sp_platform->is_platform_device)
+		psp_free_irq(pdev);
 }
 
 #ifdef CONFIG_PM
