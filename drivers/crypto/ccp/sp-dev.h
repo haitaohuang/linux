@@ -80,6 +80,7 @@ struct psp_vdata {
 	const unsigned int intsts_reg;
 	const unsigned int bootloader_info_reg;
 	const unsigned int platform_features;
+	const unsigned int quirks;
 };
 
 /* Structure to hold SP device data */
