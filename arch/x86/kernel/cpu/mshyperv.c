@@ -16,6 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/kexec.h>
+#include <linux/memblock.h>
 #include <linux/random.h>
 #include <asm/processor.h>
 #include <asm/hypervisor.h>
@@ -29,6 +30,7 @@
 #include <asm/timer.h>
 #include <asm/reboot.h>
 #include <asm/nmi.h>
+#include <asm/sev.h>
 #include <clocksource/hyperv_timer.h>
 #include <asm/msr.h>
 #include <asm/numa.h>
@@ -701,6 +703,48 @@ static bool hv_sev_es_hcall_finish(struct ghcb *ghcb, struct pt_regs *regs)
 }
 #endif
 
+struct resource rmp_res = {
+	.name  = "RMP",
+	.start = 0,
+	.end   = 0,
+	.flags = IORESOURCE_SYSTEM_RAM,
+};
+
+/*
+ * HV_X64_NESTED_NO_RMP_TABLE indicates to the nested hypervisor that no RMP
+ * table is provided/necessary, but kernel code requires access to one so we
+ * use that bit as an indication that we need to allocate one ourselves.
+ */
+bool hv_needs_snp_rmp(void)
+{
+	return IS_ENABLED(CONFIG_KVM_AMD_SEV) &&
+		boot_cpu_has(X86_FEATURE_SEV_SNP) &&
+		!cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT) &&
+		(ms_hyperv.nested_features & HV_X64_NESTED_NO_RMP_TABLE);
+}
+
+static void __init ms_hyperv_init_mem_mapping(void)
+{
+	phys_addr_t addr;
+	u64 calc_rmp_sz;
+
+	if (!hv_needs_snp_rmp())
+		return;
+
+	calc_rmp_sz = (max_pfn << 4) + RMPTABLE_CPU_BOOKKEEPING_SZ;
+	calc_rmp_sz = round_up(calc_rmp_sz, SZ_1M);
+	addr = memblock_phys_alloc_range(calc_rmp_sz, SZ_1M, 0, max_pfn << PAGE_SHIFT);
+	if (!addr) {
+		pr_warn("Unable to allocate RMP table\n");
+		return;
+	}
+	rmp_res.start = addr;
+	rmp_res.end = addr + calc_rmp_sz - 1;
+	wrmsrl(MSR_AMD64_RMP_BASE, rmp_res.start);
+	wrmsrl(MSR_AMD64_RMP_END, rmp_res.end);
+	insert_resource(&iomem_resource, &rmp_res);
+}
+
 const __initconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
 	.name			= "Microsoft Hyper-V",
 	.detect			= ms_hyperv_platform,
@@ -709,6 +753,7 @@ const __initconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
 	.init.msi_ext_dest_id	= ms_hyperv_msi_ext_dest_id,
 	.init.init_platform	= ms_hyperv_init_platform,
 	.init.guest_late_init	= ms_hyperv_late_init,
+	.init.init_mem_mapping  = ms_hyperv_init_mem_mapping,
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 	.runtime.sev_es_hcall_prepare = hv_sev_es_hcall_prepare,
 	.runtime.sev_es_hcall_finish = hv_sev_es_hcall_finish,

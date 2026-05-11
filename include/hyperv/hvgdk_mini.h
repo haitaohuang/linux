@@ -374,6 +374,9 @@ union hv_hypervisor_version_info {
  */
 #define HV_X64_NESTED_ENLIGHTENED_TLB			BIT(22)
 
+/* Nested SNP on Hyper-V */
+#define HV_X64_NESTED_NO_RMP_TABLE			BIT(23)
+
 /* HYPERV_CPUID_ISOLATION_CONFIG.EAX bits. */
 #define HV_PARAVISOR_PRESENT				BIT(0)
 

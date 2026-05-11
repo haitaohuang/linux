@@ -133,6 +133,11 @@ static int hv_cpu_init(unsigned int cpu)
 		wrmsrq(HV_X64_MSR_VP_ASSIST_PAGE, msr.as_uint64);
 	}
 
+	if (hv_needs_snp_rmp()) {
+		wrmsrq(MSR_AMD64_RMP_BASE, rmp_res.start);
+		wrmsrq(MSR_AMD64_RMP_END, rmp_res.end);
+	}
+
 	return hyperv_init_ghcb();
 }
 

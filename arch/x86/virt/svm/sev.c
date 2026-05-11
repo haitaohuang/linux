@@ -74,12 +74,6 @@ struct rmpentry_raw {
 } __packed;
 
 /*
- * The first 16KB from the RMP_BASE is used by the processor for the
- * bookkeeping, the range needs to be added during the RMP entry lookup.
- */
-#define RMPTABLE_CPU_BOOKKEEPING_SZ	0x4000
-
-/*
  * For a non-segmented RMP table, use the maximum physical addressing as the
  * segment size in order to always arrive at index 0 in the table.
  */

@@ -269,6 +269,9 @@ static inline void hv_ivm_msr_write(u64 msr, u64 value) {}
 static inline void hv_ivm_msr_read(u64 msr, u64 *value) {}
 #endif
 
+extern struct resource rmp_res;
+bool hv_needs_snp_rmp(void);
+
 static inline bool hv_is_synic_msr(unsigned int reg)
 {
 	return (reg >= HV_X64_MSR_SCONTROL) &&
