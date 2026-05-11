@@ -29,6 +29,7 @@
 struct sp_platform {
 	int coherent;
 	unsigned int irq_count;
+	bool is_platform_device;
 };
 
 static const struct sp_dev_vdata dev_vdata[] = {
@@ -105,6 +106,7 @@ static void sp_platform_fill_vdata(struct sp_dev_vdata *vdata,
 
 static struct sp_dev_vdata *sp_get_platform_version(struct sp_device *sp)
 {
+	struct sp_platform *sp_platform = sp->dev_specific;
 	struct psp_platform_data *pdata;
 	struct device *dev = sp->dev;
 	struct sp_dev_vdata *vdata;
@@ -124,6 +126,8 @@ static struct sp_dev_vdata *sp_get_platform_version(struct sp_device *sp)
 	psp = (void *)vdata + sizeof(*vdata);
 	sev = (void *)psp + sizeof(*psp);
 	sp_platform_fill_vdata(vdata, psp, sev, pdata);
+
+	sp_platform->is_platform_device = true;
 
 	dev_dbg(dev, "PSP feature register:\t%x\n", psp->feature_reg);
 	dev_dbg(dev, "PSP IRQ enable register:\t%x\n", psp->inten_reg);
@@ -203,7 +207,7 @@ static int sp_platform_probe(struct platform_device *pdev)
 	}
 
 	attr = device_get_dma_attr(dev);
-	if (attr == DEV_DMA_NOT_SUPPORTED) {
+	if (attr == DEV_DMA_NOT_SUPPORTED && !sp_platform->is_platform_device) {
 		dev_err(dev, "DMA is not supported");
 		goto e_err;
 	}
