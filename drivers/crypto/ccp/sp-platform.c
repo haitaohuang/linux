@@ -230,6 +230,12 @@ static int sp_platform_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(dev, sp);
 
+	if (sp_platform->is_platform_device) {
+		sp->set_psp_master_device = psp_set_master;
+		sp->get_psp_master_device = psp_get_master;
+		sp->clear_psp_master_device = psp_clear_master;
+	}
+
 	ret = sp_init(sp);
 	if (ret)
 		goto e_err;

@@ -149,6 +149,10 @@ int sp_request_psp_irq(struct sp_device *sp, irq_handler_t handler,
 void sp_free_psp_irq(struct sp_device *sp, void *data);
 struct sp_device *sp_get_psp_master_device(void);
 
+void psp_set_master(struct sp_device *sp);
+struct sp_device *psp_get_master(void);
+void psp_clear_master(struct sp_device *sp);
+
 #ifdef CONFIG_CRYPTO_DEV_SP_CCP
 
 int ccp_dev_init(struct sp_device *sp);

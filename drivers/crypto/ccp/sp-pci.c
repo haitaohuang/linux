@@ -38,7 +38,6 @@ struct sp_pci {
 	int msix_count;
 	struct msix_entry msix_entry[MSIX_VECTORS];
 };
-static struct sp_device *sp_dev_master;
 
 #define version_attribute_show(name, _offset)					\
 static ssize_t name##_show(struct device *d, struct device_attribute *attr,	\
@@ -176,56 +175,6 @@ static void sp_free_irqs(struct sp_device *sp)
 
 	sp->ccp_irq = 0;
 	sp->psp_irq = 0;
-}
-
-static bool sp_pci_is_master(struct sp_device *sp)
-{
-	struct device *dev_cur, *dev_new;
-	struct pci_dev *pdev_cur, *pdev_new;
-
-	dev_new = sp->dev;
-	dev_cur = sp_dev_master->dev;
-
-	pdev_new = to_pci_dev(dev_new);
-	pdev_cur = to_pci_dev(dev_cur);
-
-	if (pci_domain_nr(pdev_new->bus) != pci_domain_nr(pdev_cur->bus))
-		return pci_domain_nr(pdev_new->bus) < pci_domain_nr(pdev_cur->bus);
-
-	if (pdev_new->bus->number != pdev_cur->bus->number)
-		return pdev_new->bus->number < pdev_cur->bus->number;
-
-	if (PCI_SLOT(pdev_new->devfn) != PCI_SLOT(pdev_cur->devfn))
-		return PCI_SLOT(pdev_new->devfn) < PCI_SLOT(pdev_cur->devfn);
-
-	if (PCI_FUNC(pdev_new->devfn) != PCI_FUNC(pdev_cur->devfn))
-		return PCI_FUNC(pdev_new->devfn) < PCI_FUNC(pdev_cur->devfn);
-
-	return false;
-}
-
-static void psp_set_master(struct sp_device *sp)
-{
-	if (!sp_dev_master) {
-		sp_dev_master = sp;
-		return;
-	}
-
-	if (sp_pci_is_master(sp))
-		sp_dev_master = sp;
-}
-
-static struct sp_device *psp_get_master(void)
-{
-	return sp_dev_master;
-}
-
-static void psp_clear_master(struct sp_device *sp)
-{
-	if (sp == sp_dev_master) {
-		sp_dev_master = NULL;
-		dev_dbg(sp->dev, "Cleared sp_dev_master\n");
-	}
 }
 
 static int sp_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)

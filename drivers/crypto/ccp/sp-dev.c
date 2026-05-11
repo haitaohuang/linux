@@ -14,6 +14,8 @@
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
+#include <linux/pci.h>
+#include <linux/platform_device.h>
 #include <linux/spinlock.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
@@ -39,6 +41,8 @@ static LIST_HEAD(sp_units);
 
 /* Ever-increasing value to produce unique unit numbers */
 static atomic_t sp_ordinal;
+
+static struct sp_device *sp_dev_master;
 
 static void sp_add_device(struct sp_device *sp)
 {
@@ -249,6 +253,63 @@ struct sp_device *sp_get_psp_master_device(void)
 unlock:
 	write_unlock_irqrestore(&sp_unit_lock, flags);
 	return ret;
+}
+
+static bool sp_pci_is_master(struct sp_device *sp)
+{
+	struct device *dev_cur, *dev_new;
+	struct pci_dev *pdev_cur, *pdev_new;
+
+	dev_new = sp->dev;
+	dev_cur = sp_dev_master->dev;
+
+	pdev_new = to_pci_dev(dev_new);
+	pdev_cur = to_pci_dev(dev_cur);
+
+	if (pci_domain_nr(pdev_new->bus) != pci_domain_nr(pdev_cur->bus))
+		return pci_domain_nr(pdev_new->bus) < pci_domain_nr(pdev_cur->bus);
+
+	if (pdev_new->bus->number != pdev_cur->bus->number)
+		return pdev_new->bus->number < pdev_cur->bus->number;
+
+	if (PCI_SLOT(pdev_new->devfn) != PCI_SLOT(pdev_cur->devfn))
+		return PCI_SLOT(pdev_new->devfn) < PCI_SLOT(pdev_cur->devfn);
+
+	if (PCI_FUNC(pdev_new->devfn) != PCI_FUNC(pdev_cur->devfn))
+		return PCI_FUNC(pdev_new->devfn) < PCI_FUNC(pdev_cur->devfn);
+
+	return false;
+}
+
+void psp_set_master(struct sp_device *sp)
+{
+	struct device *dev_cur, *dev_new;
+
+	if (!sp_dev_master) {
+		sp_dev_master = sp;
+		return;
+	}
+
+	dev_new = sp->dev;
+	dev_cur = sp_dev_master->dev;
+
+	if (dev_is_pci(dev_new) && dev_is_pci(dev_cur) && sp_pci_is_master(sp))
+		sp_dev_master = sp;
+	if (dev_is_pci(dev_new) && dev_is_platform(dev_cur))
+		sp_dev_master = sp;
+}
+
+struct sp_device *psp_get_master(void)
+{
+	return sp_dev_master;
+}
+
+void psp_clear_master(struct sp_device *sp)
+{
+	if (sp == sp_dev_master) {
+		sp_dev_master = NULL;
+		dev_dbg(sp->dev, "Cleared sp_dev_master\n");
+	}
 }
 
 static int __init sp_mod_init(void)
