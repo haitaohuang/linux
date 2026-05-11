@@ -577,6 +577,9 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 	 *   don't advertise the feature under CONFIG_X86_32.
 	 */
 	if (cpu_has(c, X86_FEATURE_SME) || cpu_has(c, X86_FEATURE_SEV)) {
+		if (cpu_has(c, X86_FEATURE_HYPERVISOR))
+			msr_set_bit(MSR_AMD64_SYSCFG, MSR_AMD64_SYSCFG_MEM_ENCRYPT_BIT);
+
 		/* Check if memory encryption is enabled */
 		rdmsrq(MSR_AMD64_SYSCFG, msr);
 		if (!(msr & MSR_AMD64_SYSCFG_MEM_ENCRYPT))
@@ -596,7 +599,7 @@ static void early_detect_mem_encrypt(struct cpuinfo_x86 *c)
 			setup_clear_cpu_cap(X86_FEATURE_SME);
 
 		rdmsrq(MSR_K7_HWCR, msr);
-		if (!(msr & MSR_K7_HWCR_SMMLOCK))
+		if (!(msr & MSR_K7_HWCR_SMMLOCK) && !cpu_has(c, X86_FEATURE_HYPERVISOR))
 			goto clear_sev;
 
 		return;
