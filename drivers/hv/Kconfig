@@ -73,4 +73,10 @@ config MSHV_ROOT
 
 	  If unsure, say N.
 
+config HYPERV_PSP
+	bool "Hyper-V (virtual) PSP driver"
+	depends on KVM_AMD_SEV && HYPERV && ACPI && X86_64
+	help
+	  Select this option to enable Hyper-V (virtual) PSP driver.
+
 endmenu

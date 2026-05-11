@@ -18,3 +18,6 @@ mshv_root-y := mshv_root_main.o mshv_synic.o mshv_eventfd.o mshv_irq.o \
 # Code that must be built-in
 obj-$(subst m,y,$(CONFIG_HYPERV)) += hv_common.o
 obj-$(subst m,y,$(CONFIG_MSHV_ROOT)) += hv_proc.o mshv_common.o
+
+obj-$(CONFIG_HYPERV_PSP)	+= hv_psp.o
+hv_psp-y := psp.o
