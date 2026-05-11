@@ -850,6 +850,22 @@ void snp_dump_hva_rmpentry(unsigned long hva)
 	dump_rmpentry(PHYS_PFN(paddr));
 }
 
+static bool soft_rmptable __ro_after_init;
+
+/*
+ * Test if the rmptable needs to be managed by software and is not maintained by
+ * (virtualized) hardware.
+ */
+bool snp_soft_rmptable(void)
+{
+	return soft_rmptable;
+}
+
+void __init snp_set_soft_rmptable(void)
+{
+	soft_rmptable = true;
+}
+
 static bool virt_snp_msr(void)
 {
 	return boot_cpu_has(X86_FEATURE_NESTED_VIRT_SNP_MSR);
@@ -876,6 +892,30 @@ static u64 virt_psmash(u64 paddr)
 	return ret;
 }
 
+static void snp_update_rmptable_psmash(u64 pfn)
+{
+	struct rmpentry_raw *entry = get_raw_rmpentry(pfn);
+	int level;
+
+	if (WARN_ON_ONCE(IS_ERR(entry)))
+		return;
+
+	level = RMP_TO_PG_LEVEL(entry->pagesize);
+	if (level == PG_LEVEL_2M) {
+		int i;
+
+		entry->pagesize = RMP_PG_SIZE_4K;
+		for (i = 1; i < PTRS_PER_PMD; i++) {
+			struct rmpentry_raw *it = get_raw_rmpentry(pfn + i);
+
+			if (IS_ERR(it))
+				continue;
+			*it = *entry;
+			it->gpa = entry->gpa + i;
+		}
+	}
+}
+
 /*
  * PSMASH a 2MB aligned page into 4K pages in the RMP table while preserving the
  * Validated bit.
@@ -893,6 +933,8 @@ int psmash(u64 pfn)
 
 	if (virt_snp_msr()) {
 		ret = virt_psmash(paddr);
+		if (!ret && snp_soft_rmptable())
+			snp_update_rmptable_psmash(pfn);
 	} else {
 		/* Binutils version 2.36 supports the PSMASH mnemonic. */
 		asm volatile(".byte 0xF3, 0x0F, 0x01, 0xFF"
@@ -1005,6 +1047,38 @@ static u64 virt_rmpupdate(unsigned long paddr, struct rmp_state *val)
 	return ret;
 }
 
+static void snp_update_rmptable_rmpupdate(u64 pfn, int level, struct rmp_state *val)
+{
+	struct rmpentry_raw *entry = get_raw_rmpentry(pfn);
+
+	if (WARN_ON(IS_ERR(entry)))
+		return;
+
+	if (level > PG_LEVEL_4K) {
+		int i;
+		struct rmpentry_raw tmp_rmp = {
+			.assigned = val->assigned,
+		};
+
+		for (i = 1; i < PTRS_PER_PMD; i++) {
+			struct rmpentry_raw *it = get_raw_rmpentry(pfn + i);
+
+			if (IS_ERR(it))
+				continue;
+			*it = tmp_rmp;
+		}
+	}
+	if (!val->assigned) {
+		memset(entry, 0, sizeof(*entry));
+	} else {
+		entry->assigned  = val->assigned;
+		entry->pagesize  = val->pagesize;
+		entry->immutable = val->immutable;
+		entry->gpa       = val->gpa >> PAGE_SHIFT;
+		entry->asid      = val->asid;
+	}
+}
+
 /*
  * It is expected that those operations are seldom enough so that no mutual
  * exclusion of updaters is needed and thus the overlap error condition below
@@ -1034,6 +1108,8 @@ static int rmpupdate(u64 pfn, struct rmp_state *state)
 	do {
 		if (virt_snp_msr()) {
 			ret = virt_rmpupdate(paddr, state);
+			if (!ret && snp_soft_rmptable())
+				snp_update_rmptable_rmpupdate(pfn, level, state);
 		} else {
 			/* Binutils version 2.36 supports the RMPUPDATE mnemonic. */
 			asm volatile(".byte 0xF2, 0x0F, 0x01, 0xFE"

@@ -740,9 +740,11 @@ static void __init ms_hyperv_init_mem_mapping(void)
 	}
 	rmp_res.start = addr;
 	rmp_res.end = addr + calc_rmp_sz - 1;
-	wrmsrl(MSR_AMD64_RMP_BASE, rmp_res.start);
-	wrmsrl(MSR_AMD64_RMP_END, rmp_res.end);
+	wrmsrq(MSR_AMD64_RMP_BASE, rmp_res.start);
+	wrmsrq(MSR_AMD64_RMP_END, rmp_res.end);
 	insert_resource(&iomem_resource, &rmp_res);
+
+	snp_set_soft_rmptable();
 }
 
 const __initconst struct hypervisor_x86 x86_hyper_ms_hyperv = {
