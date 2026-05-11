@@ -29,4 +29,12 @@ static inline int acpi_parse_aspt(struct resource *res, struct psp_platform_data
 }
 #endif
 
+struct platform_device;
+#if IS_ENABLED(CONFIG_HYPERV_PSP)
+int psp_alloc_irq(struct platform_device *pdev);
+void psp_free_irq(struct platform_device *pdev);
+#else
+static inline int psp_alloc_irq(struct platform_device  *pdev) { return -EINVAL; }
+static inline void psp_free_irq(struct platform_device *pdev) { }
+#endif
 #endif /* __LINUX_PSP_H */
