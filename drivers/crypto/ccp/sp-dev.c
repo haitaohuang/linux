@@ -264,6 +264,12 @@ static int __init sp_mod_init(void)
 	if (ret)
 		return ret;
 
+	ret = sp_platform_init();
+	if (ret) {
+		sp_pci_exit();
+		return ret;
+	}
+
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP
 	psp_pci_init();
 #endif
@@ -300,6 +306,7 @@ static void __exit sp_mod_exit(void)
 #ifdef CONFIG_CRYPTO_DEV_SP_PSP
 	psp_pci_exit();
 #endif
+	sp_platform_exit();
 
 	sp_pci_exit();
 #endif

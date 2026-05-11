@@ -52,6 +52,12 @@ static const struct of_device_id sp_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sp_of_match);
 
+static const struct platform_device_id sp_platform_match[] = {
+	{ "psp" },
+	{ },
+};
+MODULE_DEVICE_TABLE(platform, sp_platform_match);
+
 static struct sp_dev_vdata *sp_get_of_version(struct platform_device *pdev)
 {
 	const struct of_device_id *match;
@@ -204,6 +210,7 @@ static int sp_platform_resume(struct platform_device *pdev)
 #endif
 
 static struct platform_driver sp_platform_driver = {
+	.id_table = sp_platform_match,
 	.driver = {
 		.name = "ccp",
 		.acpi_match_table = sp_acpi_match,
