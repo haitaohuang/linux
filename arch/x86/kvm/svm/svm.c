@@ -5389,10 +5389,22 @@ static __init int svm_hardware_setup(void)
 	nrips = nrips && boot_cpu_has(X86_FEATURE_NRIPS);
 
 	if (lbrv) {
-		if (!boot_cpu_has(X86_FEATURE_LBRV))
-			lbrv = false;
-		else
+		if (!boot_cpu_has(X86_FEATURE_LBRV)) {
+			/*
+			 * On a nested SNP host (e.g. Hyper-V on Azure DCas_cc_v5),
+			 * the L1 may not expose X86_FEATURE_LBRV via CPUID. LBR
+			 * virtualization in the VMCB is handled by the underlying
+			 * L0 hypervisor when we run SEV-ES/SEV-SNP guests, so we
+			 * intentionally keep lbrv enabled here to allow the SEV-ES
+			 * and SEV-SNP capability paths to proceed.
+			 */
+			if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
+				pr_info("LBR virtualization assumed (nested hypervisor)\n");
+			else
+				lbrv = false;
+		} else {
 			pr_info("LBR virtualization supported\n");
+		}
 	}
 
 	iopm_va = svm_alloc_permissions_map(IOPM_SIZE, GFP_KERNEL);
