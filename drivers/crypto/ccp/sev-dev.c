@@ -1291,16 +1291,26 @@ static int __sev_platform_init_locked(int *error)
 	if (sev->state == SEV_STATE_INIT)
 		return 0;
 
+	/*
+	 * On a nested SNP host (Hyper-V) the PSP only supports the SNP subset
+	 * of commands. The TMR / INIT_EX handlers below allocate firmware
+	 * pages via RMPUPDATE -- those go through MSR_AMD64_VIRT_RMPUPDATE
+	 * which the L0 hypervisor may not service for arbitrary kernel
+	 * pages, and the legacy SEV INIT command fails anyway. If SNP has
+	 * already been initialised and the platform quirk says "SNP only",
+	 * mark the device as initialised and skip the rest of legacy SEV
+	 * setup to avoid the RMPUPDATE-via-WRMSR #GP and let KVM proceed.
+	 */
+	if (sev->snp_initialized && psp_master->vdata->quirks & PSP_QUIRK_SNP_ONLY) {
+		sev->state = SEV_STATE_INIT;
+		return 0;
+	}
+
 	__sev_platform_init_handle_tmr(sev);
 
 	rc = __sev_platform_init_handle_init_ex_path(sev);
 	if (rc)
 		return rc;
-
-	if (sev->snp_initialized && psp_master->vdata->quirks & PSP_QUIRK_SNP_ONLY) {
-		sev->state = SEV_STATE_INIT;
-		return 0;
-	}
 
 	rc = __sev_do_init_locked(&psp_ret);
 	if (rc && psp_ret == SEV_RET_SECURE_DATA_INVALID) {
