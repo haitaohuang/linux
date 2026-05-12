@@ -3490,8 +3490,14 @@ static int __init iommu_go_to_state(enum iommu_init_state state)
 	 * in IOMMUs, then the system is in a half-baked state, but can limp
 	 * along as all memory should be Hypervisor-Owned in the RMP. WARN,
 	 * but leave SNP as "supported" to avoid confusing the kernel.
+	 *
+	 * On a Hyper-V nested SNP host (e.g. Azure DCas_cc_v5) there is no
+	 * AMD IOMMU exposed to the L1 guest; Hyper-V handles RMP enforcement
+	 * for nested SNP guests. Don't clear CC_ATTR_HOST_SEV_SNP in that
+	 * case either.
 	 */
 	if (ret && cc_platform_has(CC_ATTR_HOST_SEV_SNP) &&
+	    !boot_cpu_has(X86_FEATURE_HYPERVISOR) &&
 	    !WARN_ON_ONCE(amd_iommu_snp_en))
 		cc_platform_clear(CC_ATTR_HOST_SEV_SNP);
 
@@ -3617,6 +3623,14 @@ void __init amd_iommu_detect(void)
 	return;
 
 disable_snp:
+	/*
+	 * Nested SNP hosts (e.g. Azure DCas_cc_v5 running under Hyper-V)
+	 * have no AMD IOMMU exposed to the L1 guest, but Hyper-V handles
+	 * RMP enforcement for nested SNP guests. Leave CC_ATTR_HOST_SEV_SNP
+	 * set on hypervisor so the rest of the SNP stack can initialise.
+	 */
+	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
+		return;
 	if (cc_platform_has(CC_ATTR_HOST_SEV_SNP))
 		cc_platform_clear(CC_ATTR_HOST_SEV_SNP);
 }
