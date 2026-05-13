@@ -875,6 +875,16 @@ static bool virt_snp_msr(void)
 }
 
 /*
+ * Some L0 hypervisors (e.g. Hyper-V on certain Azure SKUs) advertise the
+ * virtualizable RMPUPDATE/PSMASH MSRs via CPUID but #GP when those MSRs are
+ * actually written.  When combined with the soft RMP table mode the kernel
+ * can still satisfy the RMP transition entirely in software, so latch the
+ * first #GP and short-circuit subsequent calls to skip the trapping WRMSR.
+ */
+static bool virt_rmpupdate_unsupported;
+static bool virt_psmash_unsupported;
+
+/*
  * This version of psmash is not implemented in hardware but always
  * traps to L0 hypervisor. It doesn't follow usual wrmsr conventions.
  * Inputs:
@@ -937,7 +947,18 @@ int psmash(u64 pfn)
 		return -EINVAL;
 
 	if (virt_snp_msr()) {
-		ret = virt_psmash(paddr);
+		if (READ_ONCE(virt_psmash_unsupported) && snp_soft_rmptable()) {
+			ret = 0;
+		} else {
+			ret = virt_psmash(paddr);
+			if (ret == -EIO && snp_soft_rmptable()) {
+				if (!READ_ONCE(virt_psmash_unsupported)) {
+					WRITE_ONCE(virt_psmash_unsupported, true);
+					pr_info("SEV-SNP: virt_psmash WRMSR #GP, falling back to soft RMP table only\n");
+				}
+				ret = 0;
+			}
+		}
 		if (!ret && snp_soft_rmptable())
 			snp_update_rmptable_psmash(pfn);
 	} else {
@@ -1114,7 +1135,18 @@ static int rmpupdate(u64 pfn, struct rmp_state *state)
 
 	do {
 		if (virt_snp_msr()) {
-			ret = virt_rmpupdate(paddr, state);
+			if (READ_ONCE(virt_rmpupdate_unsupported) && snp_soft_rmptable()) {
+				ret = 0;
+			} else {
+				ret = virt_rmpupdate(paddr, state);
+				if (ret == -EIO && snp_soft_rmptable()) {
+					if (!READ_ONCE(virt_rmpupdate_unsupported)) {
+						WRITE_ONCE(virt_rmpupdate_unsupported, true);
+						pr_info("SEV-SNP: virt_rmpupdate WRMSR #GP, falling back to soft RMP table only\n");
+					}
+					ret = 0;
+				}
+			}
 			if (!ret && snp_soft_rmptable())
 				snp_update_rmptable_rmpupdate(pfn, level, state);
 		} else {
