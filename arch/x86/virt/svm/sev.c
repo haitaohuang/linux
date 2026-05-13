@@ -28,6 +28,8 @@
 #include <asm/cpu.h>
 #include <asm/apic.h>
 #include <asm/cpuid/api.h>
+#include <asm/asm.h>
+#include <asm/extable_fixup_types.h>
 #include <asm/cmdline.h>
 #include <asm/iommu.h>
 #include <asm/msr.h>
@@ -885,9 +887,11 @@ static u64 virt_psmash(u64 paddr)
 	int ret;
 
 	asm volatile(
-		"wrmsr\n\t"
-		: "=a"(ret)
-		: "a"(paddr), "c"(MSR_AMD64_VIRT_PSMASH)
+		"1: wrmsr\n"
+		"2:\n"
+		_ASM_EXTABLE_TYPE_REG(1b, 2b, EX_TYPE_WRMSR_SAFE, %[ret])
+		: [ret] "=a"(ret)
+		: "0"(paddr), "c"(MSR_AMD64_VIRT_PSMASH)
 		: "memory", "cc"
 	);
 	return ret;
@@ -1040,9 +1044,11 @@ static u64 virt_rmpupdate(unsigned long paddr, struct rmp_state *val)
 	register u64 lo asm("rdx") = ((u64 *)val)[0];
 
 	asm volatile(
-		"wrmsr\n\t"
-		: "=a"(ret)
-		: "a"(paddr), "c"(MSR_AMD64_VIRT_RMPUPDATE), "r"(lo), "r"(hi)
+		"1: wrmsr\n"
+		"2:\n"
+		_ASM_EXTABLE_TYPE_REG(1b, 2b, EX_TYPE_WRMSR_SAFE, %[ret])
+		: [ret] "=a"(ret)
+		: "0"(paddr), "c"(MSR_AMD64_VIRT_RMPUPDATE), "r"(lo), "r"(hi)
 		: "memory", "cc"
 	);
 	return ret;
