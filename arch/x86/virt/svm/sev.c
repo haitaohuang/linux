@@ -124,6 +124,37 @@ static unsigned long snp_nr_leaked_pages;
 #undef pr_fmt
 #define pr_fmt(fmt)	"SEV-SNP: " fmt
 
+/*
+ * Hyper-V nested SNP host variant of __snp_enable.  L0 starts intercepting
+ * the virt_rmpupdate / virt_psmash MSRs only after L1 has set
+ * SYSCFG.SNP_EN, so program that bit early via cpuhp.  Use fault-safe MSR
+ * accesses since the underlying L0 / firmware may #GP on unexpected writes,
+ * and only set SNP_EN (not SNP_VMPL_EN) because the latter is unverified
+ * in this nested context.
+ */
+static int __snp_enable_hv(unsigned int cpu)
+{
+	u64 val = 0;
+	int ret;
+
+	if (!cc_platform_has(CC_ATTR_HOST_SEV_SNP))
+		return 0;
+
+	if (rdmsrq_safe(MSR_AMD64_SYSCFG, &val))
+		return 0;
+
+	if (val & MSR_AMD64_SYSCFG_SNP_EN)
+		return 0;
+
+	val |= MSR_AMD64_SYSCFG_SNP_EN;
+
+	ret = wrmsrq_safe(MSR_AMD64_SYSCFG, val);
+	if (ret)
+		pr_warn_once("CPU%u: failed to set SYSCFG.SNP_EN (ret=%d)\n",
+			     cpu, ret);
+	return 0;
+}
+
 static int __mfd_enable(unsigned int cpu)
 {
 	u64 val;
@@ -515,6 +546,56 @@ int __init snp_rmptable_init(void)
 		return -ENOSYS;
 
 	/*
+	 * On nested Hyper-V SNP hosts the L0 hypervisor already owns the SNP
+	 * SYSCFG state and the physical RMP table, while the kernel only
+	 * maintains a software shadow.  The mfd_enable / snp_enable / cpuhp
+	 * wiring below all write MSR_AMD64_SYSCFG which #GPs in this context.
+	 * Zero the shadow rmptable contents ourselves (memblock-allocated RMP
+	 * backing is not pre-zeroed) and return without touching hardware.
+	 */
+	if (snp_soft_rmptable()) {
+		int ret;
+
+		if (!clear_rmptable_bookkeeping()) {
+			free_rmp_segment_table();
+			return -ENOSYS;
+		}
+
+		for (i = 0; i < rst_max_index; i++) {
+			struct rmp_segment_desc *desc;
+
+			desc = rmp_segment_table[i];
+			if (!desc)
+				continue;
+
+			memset(desc->rmp_entry, 0, desc->size);
+		}
+
+		/*
+		 * On Hyper-V nested SNP hosts the L0 hypervisor only starts
+		 * intercepting the virt_rmpupdate / virt_psmash MSRs once L1
+		 * has set SYSCFG.SNP_EN.  Until then both MSR writes raise
+		 * #GP.  Use cpuhp_setup_state with a fault-safe helper so the
+		 * bit is set on every currently-online CPU (cpuhp_setup_state
+		 * invokes the startup callback on already-online CPUs) and on
+		 * every CPU brought online later.  Skip wbinvd / mfd_enable /
+		 * SNP_VMPL_EN because the real RMP table is L0-owned and the
+		 * extra bits are unverified on this nested context.
+		 */
+		ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN,
+					"x86/rmptable_init_hv:online",
+					__snp_enable_hv, NULL);
+		if (ret < 0) {
+			pr_err("cpuhp_setup_state(SNP_EN) failed: %d\n", ret);
+			free_rmp_segment_table();
+			return ret;
+		}
+
+		pr_info("Soft RMP table initialised; SYSCFG.SNP_EN set on all CPUs\n");
+		return 0;
+	}
+
+	/*
 	 * Check if SEV-SNP is already enabled, this can happen in case of
 	 * kexec boot.
 	 */
@@ -558,6 +639,25 @@ skip_enable:
 
 	return 0;
 }
+
+/*
+ * On bare metal snp_rmptable_init() is invoked from iommu_snp_enable()
+ * during AMD IOMMU setup.  On a nested Hyper-V SNP host there is no AMD
+ * IOMMU (no IVRS table), so that path never runs.  Register a separate
+ * device_initcall that fires only when the kernel maintains a software
+ * RMP shadow so the rmp_segment_table gets allocated.
+ */
+static int __init snp_rmptable_init_hv(void)
+{
+	if (!snp_soft_rmptable())
+		return 0;
+
+	if (!cc_platform_has(CC_ATTR_HOST_SEV_SNP))
+		return 0;
+
+	return snp_rmptable_init();
+}
+device_initcall(snp_rmptable_init_hv);
 
 static void set_rmp_segment_info(unsigned int segment_shift)
 {
