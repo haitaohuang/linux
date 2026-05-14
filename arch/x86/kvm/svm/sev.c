@@ -3078,6 +3078,23 @@ out:
 	sev_supported_vmsa_features = 0;
 	if (sev_es_debug_swap_enabled)
 		sev_supported_vmsa_features |= SVM_SEV_FEAT_DEBUG_SWAP;
+
+	if (sev_snp_enabled && cpu_feature_enabled(X86_FEATURE_SMT_PROTECTION)) {
+		unsigned long long hlt_wakeup_icr;
+		unsigned int cpu, sibling;
+
+		sev_supported_vmsa_features |= SVM_SEV_FEAT_SMT_PROTECTION;
+
+		for_each_online_cpu(cpu) {
+			for_each_cpu(sibling, topology_sibling_cpumask(cpu)) {
+				if (sibling == cpu)
+					continue;
+				hlt_wakeup_icr = LOCAL_TIMER_VECTOR | (unsigned long long)
+						 per_cpu(x86_cpu_to_apicid, sibling) << 32;
+				wrmsrq_safe_on_cpu(cpu, MSR_AMD64_HLT_WAKEUP_ICR, hlt_wakeup_icr);
+			}
+		}
+	}
 }
 
 void sev_hardware_unsetup(void)

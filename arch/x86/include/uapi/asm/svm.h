@@ -126,6 +126,7 @@
 	/* SW_EXITINFO1[11:4] */				\
 	((((u64)reason_code) & 0xff) << 4))
 #define SVM_VMGEXIT_UNSUPPORTED_EVENT		0x8000ffff
+#define SVM_VMGEXIT_IDLE_REQUIRED		0xfffffffd
 
 /* Exit code reserved for hypervisor/software use */
 #define SVM_EXIT_SW				0xf0000000

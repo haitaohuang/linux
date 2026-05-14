@@ -3487,6 +3487,9 @@ static int svm_handle_invalid_exit(struct kvm_vcpu *vcpu, u64 exit_code)
 
 int svm_invoke_exit_handler(struct kvm_vcpu *vcpu, u64 exit_code)
 {
+	if (exit_code == SVM_VMGEXIT_IDLE_REQUIRED)
+		return 1; /* resume guest */
+
 	if (!svm_check_exit_valid(exit_code))
 		return svm_handle_invalid_exit(vcpu, exit_code);
 
